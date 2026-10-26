@@ -56,10 +56,22 @@ app.whenReady().then(async () => {
     await until(() => !timer.webContents.isLoading(), 'standalone window load');
     assert.equal(await timer.webContents.executeJavaScript('document.title'), 'Archipelago Timer and Stat Tracker');
     const run = code => timer.webContents.executeJavaScript(code);
+    // Hosted Windows runners have no dependable desktop pointer. Exercise the
+    // actual :hover stylesheet through Chromium there; local runs keep native input.
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      timer.webContents.debugger.attach('1.3');
+      await timer.webContents.debugger.sendCommand('DOM.enable');
+      await timer.webContents.debugger.sendCommand('CSS.enable');
+    }
     const movePointer = async inside => {
       timer.focus(); timer.webContents.focus();
       if (inside) timer.webContents.sendInputEvent({ type: 'mouseEnter', x: 20, y: 30 });
       timer.webContents.sendInputEvent({ type: inside ? 'mouseMove' : 'mouseLeave', x: inside ? 20 : -1, y: inside ? 30 : -1 });
+      if (process.env.GITHUB_ACTIONS === 'true') {
+        const { root } = await timer.webContents.debugger.sendCommand('DOM.getDocument');
+        const { nodeId } = await timer.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: root.nodeId, selector: '#timer-stage' });
+        await timer.webContents.debugger.sendCommand('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: inside ? ['hover'] : [] });
+      }
       try { await until(() => run(`getComputedStyle(document.querySelector('.timer-toolbar')).opacity === '${inside ? 1 : 0}'`), inside ? 'hover controls appear' : 'hover controls disappear'); }
       catch (error) { throw new Error(`${error.message}: ${await run(`JSON.stringify({hover: document.getElementById('timer-stage').matches(':hover'), opacity: getComputedStyle(document.querySelector('.timer-toolbar')).opacity})`)}; focused=${timer.isFocused()}`); }
     };
