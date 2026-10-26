@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.log
+
+# Local instructions and machine-specific files are never published.
+/AGENTS.md
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.pfx
+*.p12
+settings.json*
+*-stats.json
+*-statistics.json
+exports/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

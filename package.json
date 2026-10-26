@@ -1,0 +1,65 @@
+{
+  "name": "archipelago-timer-stat-tracker",
+  "version": "0.1.11",
+  "description": "Shared Archipelago run timers, individual and group completion statistics, and a solo stopwatch.",
+  "main": "main.js",
+  "author": "JC_DeSantis",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:ui": "electron test/timer-ui-smoke.cjs",
+    "build": "electron-builder --win --x64 --publish never"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.jcdesantis.archipelago-timer-stat-tracker",
+    "productName": "Archipelago Timer and Stat Tracker",
+    "directories": {
+      "output": "dist"
+    },
+    "compression": "normal",
+    "files": [
+      "main.js",
+      "settings.js",
+      "run-timer.js",
+      "run-timer-preload.js",
+      "run-timer-renderer.js",
+      "timer-alerts.js",
+      "run-timer.html",
+      "run-timer.css",
+      "assets/**/*",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis",
+        "zip"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "Archipelago-Timer-and-Stat-Tracker-Portable.exe"
+    },
+    "nsis": {
+      "artifactName": "Archipelago-Timer-and-Stat-Tracker-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Archipelago Timer and Stat Tracker",
+      "deleteAppDataOnUninstall": false
+    },
+    "artifactName": "Archipelago-Timer-and-Stat-Tracker-${version}-${arch}.${ext}",
+    "publish": null
+  }
+}
