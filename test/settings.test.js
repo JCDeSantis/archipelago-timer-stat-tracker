@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { Settings } = require('../settings');
+const { Settings } = require('../src/settings');
 
 test('standalone settings persist connection and solo state in their own profile', () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-timer-settings-'));

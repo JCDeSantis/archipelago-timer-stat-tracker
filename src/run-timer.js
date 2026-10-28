@@ -2,6 +2,7 @@
 const { EventEmitter } = require('events');
 const { createHash, randomUUID } = require('crypto');
 const WebSocket = require('ws');
+const { raceResultLines } = require('./race-results');
 
 function serverAddress(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 2048) throw new Error('Enter an Archipelago server address.');
@@ -46,11 +47,12 @@ function checkStats(checks, startedAt, finishedAt) {
   for (const time of times) { longest = Math.max(longest, time - previous); previous = time; }
   if (finishedAt !== null) longest = Math.max(longest, finishedAt - previous);
   return { checksCompleted: times.length, elapsedMs: finishedAt === null ? null : Math.max(0, finishedAt - startedAt),
-    longestBKMs: finishedAt === null ? null : longest };
+    longestBKMs: finishedAt === null ? null : longest,
+    recordedLongestBKMs: longest, lastCheckAt: previous };
 }
 
 class RunTimer extends EventEmitter {
-  constructor({ Socket = WebSocket, clock = () => performance.now(), saveSolo = () => {}, solo = null, followRoomCountdown = true } = {}) {
+  constructor({ Socket = WebSocket, clock = () => performance.now(), saveSolo = () => {}, solo = null, followRoomCountdown = true, resolveRoster = null } = {}) {
     super();
     this.Socket = Socket;
     this.clock = clock;
@@ -78,6 +80,9 @@ class RunTimer extends EventEmitter {
     this.run = null;
     this.hydrated = false;
     this.pendingGoals = new Map();
+    this.resolveRoster = resolveRoster;
+    this.lastPacketAt = null;
+    this.lastPongAt = null;
   }
 
   now() { return this.anchor.server + this.clock() - this.anchor.local; }
@@ -177,6 +182,16 @@ class RunTimer extends EventEmitter {
   }
   changed() { this.emit('change', this.snapshot()); }
 
+  postResults(options = {}) {
+    const lines = raceResultLines(this.snapshot(), options);
+    if (this.connection !== 'connected' || !this.hydrated) throw new Error('Connect to the Archipelago room before posting results.');
+    const key = `${this.key}:${this.run.startedAt}`;
+    if (this.postedResultsFor === key) throw new Error('These results have already been posted from this app.');
+    this.send(...lines.map(text => ({ cmd: 'Say', text })));
+    this.postedResultsFor = key;
+    this.changed();
+  }
+
   snapshot() {
     const roster = this.run ? this.run.players : this.players;
     const players = roster.map(p => {
@@ -187,7 +202,7 @@ class RunTimer extends EventEmitter {
       const stats = this.run ? checkStats(this.checks[p.slot] || {}, this.run.startedAt, finishedAt) : null;
       const info = this.locations[p.slot];
       const checkedCount = info ? Math.min(info.total, new Set([...info.checked, ...Object.keys(this.checks[p.slot] || {}).map(Number)]).size) : null;
-      return { ...p, status: this.statuses[p.slot] ?? null, finishedAt, releasedAt, stats,
+      return { ...p, originalName: p.originalName || this.players.find(q => q.slot === p.slot)?.originalName || p.name, status: this.statuses[p.slot] ?? null, finishedAt, releasedAt, stats,
         checkProgress: info ? { checked: checkedCount, total: info.total } : null,
         completed, released: releasedAt !== null, stopped: completed || releasedAt !== null };
     });
@@ -200,7 +215,7 @@ class RunTimer extends EventEmitter {
     const add = (id, type, at, message) => events.push({ id, type, at, message });
     if (!this.run) for (const p of players) {
       const ready = this.readies[p.slot];
-      if (ready?.ready && ready.expiresAt > this.now()) add(`ready:${p.slot}`, 'ready', ready.confirmedAt ?? ready.at, `${p.name} is ready for their selected roster.`);
+      if (ready?.ready && ready.expiresAt > this.now()) add(`ready:${p.slot}:${ready.confirmedAt ?? ready.at}`, 'ready', ready.confirmedAt ?? ready.at, `${p.name} is ready for their selected roster.`);
     }
     if (this.run) {
       add('start', 'start', this.run.startedAt, this.run.source === 'archipelago-countdown' ? 'The race has started from the Archipelago room countdown.' : 'The race has started.');
@@ -226,8 +241,9 @@ class RunTimer extends EventEmitter {
       serverNow: this.now(), seed: this.seed || '', team: this.team ?? null,
       address: this.options?.address || '', session: this.options?.session || 'main',
       slot: this.slot ?? null, players, run: this.run,
+      selectedSlots: this.selectedSlots, health: { lastPacketAt: this.lastPacketAt, lastPongAt: this.lastPongAt, reconnectAttempt: this.reconnectAttempt || 0 },
       readies: this.readies, startPending: !!this.pendingStart || this.countdownScheduled, followRoomCountdown: this.followRoomCountdown, events, bk, runnerBKs,
-      allFinished, groupFinishedAt,
+      allFinished, groupFinishedAt, resultsPosted: !!this.run && this.postedResultsFor === `${this.key}:${this.run.startedAt}`,
       stats: this.run ? checkStats(groupChecks, this.run.startedAt, groupFinishedAt) : null,
       solo: this.solo,
     };
@@ -296,7 +312,7 @@ class RunTimer extends EventEmitter {
       // Use only known error codes; error messages can include credential-bearing URLs.
       networkError = ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPROTO', 'HPE_INVALID_CONSTANT', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID'].includes(error.code) ? error.code : '';
     });
-    socket.on('pong', () => { this.alive = true; });
+    socket.on('pong', () => { this.alive = true; this.lastPongAt = Date.now(); });
     socket.on('close', () => {
       if (this.socket !== socket) return;
       clearTimeout(this.timeout);
@@ -350,6 +366,7 @@ class RunTimer extends EventEmitter {
 
   receive(packet) {
     if (!packet || typeof packet.cmd !== 'string') return;
+    this.lastPacketAt = Date.now();
     const countdown = roomCountdownSeconds(packet, this.team);
     if (packet.cmd === 'RoomInfo') {
       if (!Number.isFinite(packet.time) || typeof packet.seed_name !== 'string') throw new Error('The room did not provide a server clock and seed.');
@@ -368,9 +385,12 @@ class RunTimer extends EventEmitter {
       if (!Number.isInteger(packet.team) || !Number.isInteger(packet.slot) || !packet.slot_info || !Array.isArray(packet.players)) throw new Error('Unsupported room player list.');
       this.team = packet.team;
       this.slot = packet.slot;
+      if (this.expectedRun && (this.expectedRun.seed !== this.seed || this.expectedRun.team !== this.team)) throw new Error('This is not the original room/team for the historical run.');
       this.players = packet.players.filter(p => p.team === this.team && packet.slot_info[p.slot]?.type === 1)
-        .map(p => ({ slot: p.slot, name: String(p.alias || p.name), game: String(packet.slot_info[p.slot].game) }));
+        .map(p => ({ slot: p.slot, name: String(p.alias || p.name), originalName: String(p.name), game: String(packet.slot_info[p.slot].game) }));
       if (!this.players.length) throw new Error('No playable slots in this team.');
+      const preferred = this.resolveRoster?.(this.players);
+      if (Array.isArray(preferred)) this.selectedSlots = preferred;
       this.key = 'ap_timer_stats_v1_' + createHash('sha256').update(JSON.stringify([this.seed, this.team, this.options.session])).digest('hex').slice(0, 32);
       this.roomKey = 'ap_timer_stats_v1_' + createHash('sha256').update(JSON.stringify([this.seed, this.team])).digest('hex').slice(0, 32);
       this.run = null;
@@ -400,6 +420,7 @@ class RunTimer extends EventEmitter {
     } else if (packet.cmd === 'Retrieved') {
       for (const [key, value] of Object.entries(packet.keys || {})) this.stored(key, value, false);
       if (packet.timerInitial) {
+        if (this.expectedRun && this.run?.startedAt !== this.expectedRun.startedAt) throw new Error('The historical shared start is missing or different. This run cannot be resumed from that session.');
         this.hydrated = true;
         this.connection = 'connected';
         this.reconnectAttempt = 0;

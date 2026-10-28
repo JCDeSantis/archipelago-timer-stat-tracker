@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { TimerAlerts } = require('../timer-alerts');
+const { TimerAlerts } = require('../src/timer-alerts');
 
 function harness() {
   const alerts = new TimerAlerts();

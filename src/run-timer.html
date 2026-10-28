@@ -13,11 +13,19 @@
     <section id="timer-stage" aria-label="Race timer">
       <div class="compact-drag" aria-hidden="true"></div>
       <div class="clock-card"><p class="eyebrow" id="clock-label">GROUP ELAPSED</p><div id="group-clock" class="clock" role="timer">00:00:00</div><p id="group-detail" class="muted">Waiting for a shared start</p>
+        <button id="health-indicator" type="button" aria-label="Connection and recording health">Not connected</button>
         <div id="timer-popup" class="timer-popup" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true"></div>
         <div id="compact-bk" class="compact-bk" hidden><span>BK Timer</span><strong id="compact-bk-clock" role="timer" aria-label="Time since your last recorded check">00:05:00</strong></div>
-        <div class="timer-toolbar" aria-label="Timer view controls"><button id="show-stats" type="button" aria-controls="results" aria-expanded="false">Show Stats</button><button id="timer-only" type="button" aria-pressed="false" title="Toggle timer-only mode. Escape returns to the full view.">Timer only</button></div>
+        <div class="timer-toolbar" aria-label="Timer view controls"><button id="show-stats" type="button" aria-controls="results" aria-expanded="false">Show Stats</button><button id="timer-only" type="button" aria-pressed="false" title="Toggle timer-only mode. Escape returns to the full view.">Timer only</button><button id="copy-results" type="button" hidden>Copy results</button><button id="post-results" type="button" hidden>Post to chat</button></div>
+        <p id="share-status" class="muted" role="status" aria-live="polite" hidden></p>
+      </div>
+      <div id="focused-stats" aria-label="Runner statistics" hidden>
+        <div id="focused-stats-scroll" tabindex="0" role="region" aria-label="Runner statistics, scroll for more runners"><table><thead><tr><th scope="col">Runner</th><th scope="col">Checks</th><th scope="col">Longest BK</th></tr></thead><tbody id="focused-runner-stats"></tbody></table></div>
       </div>
     </section>
+    <nav id="workspace-nav" aria-label="Race tools"><button type="button" data-workspace="live" aria-pressed="true">Live race</button><button type="button" data-workspace="history" aria-pressed="false">History &amp; racers</button><button type="button" data-workspace="profiles" aria-pressed="false">Profiles</button><button type="button" data-workspace="alerts" aria-pressed="false">Alerts &amp; sounds</button><button type="button" data-workspace="health" aria-pressed="false">Connection health</button></nav>
+    <p id="feature-notice" class="note" role="status" hidden></p>
+    <section id="workspace-panel" aria-label="Race tools" hidden></section>
     <section id="race-events" aria-labelledby="events-heading">
       <div class="heading"><h2 id="events-heading">Race events</h2><span id="events-status" class="muted">Waiting for a race</span></div>
       <div id="bk-alert" hidden><span>BK Timer · Your runner</span><strong id="bk-clock">00:05:00</strong><span id="bk-detail" class="muted">Since your last recorded check</span></div>
@@ -50,6 +58,7 @@
     </section></details>
     <section id="results" aria-labelledby="results-heading" hidden>
       <div class="heading"><h2 id="results-heading">Run statistics</h2><span id="results-state" class="muted"></span></div>
+      <div id="completed-tools" class="actions" hidden><button id="preview-current-results" type="button">Result preview</button><button id="card-current-results" type="button">Finish card</button><button id="awards-current-results" type="button">Race highlights</button></div>
       <div class="stats-grid">
         <div class="stat-card"><span class="muted">Group checks completed</span><strong id="stats-checks">0</strong></div>
         <div class="stat-card"><span class="muted">Group time</span><strong id="stats-time">—</strong></div>
@@ -67,7 +76,12 @@
     </section></details>
     <p id="error" role="alert"></p>
   </main>
+  <dialog id="share-results-dialog" aria-labelledby="share-heading"><div class="heading"><h2 id="share-heading">Result preview</h2><button type="button" data-close="share-results-dialog" aria-label="Close result preview">Close</button></div><p id="preview-target" class="note"></p><div class="actions"><label class="inline-check"><input id="preview-checks" type="checkbox" checked>Checks</label><label class="inline-check"><input id="preview-bk" type="checkbox" checked>Longest BK</label><label class="inline-check"><input id="preview-awards" type="checkbox">Highlights</label><label class="inline-check">Names<select id="preview-names"><option value="slots">From this race</option><option value="identities">Local display names</option></select></label></div><pre id="result-preview-text"></pre><p id="preview-lines" class="note"></p><div class="actions"><button id="preview-copy" class="primary" type="button">Copy preview</button><button id="preview-post" type="button">Post preview to room</button><button id="preview-refresh" type="button">Refresh preview</button><button id="preview-card" type="button">Finish card</button></div><p id="preview-feedback" class="note" role="status"></p></dialog>
+  <dialog id="finish-card-dialog" aria-labelledby="card-heading"><div class="heading"><h2 id="card-heading">Finish card</h2><button type="button" data-close="finish-card-dialog">Close</button></div><div class="fields"><label>Card<select id="card-mode"><option value="group">Full group</option></select></label><label>Layout<select id="card-layout"><option value="scoreboard">Scoreboard</option><option value="highlights">Highlights</option></select></label><label>Names<select id="card-names"><option value="slots">From this race</option><option value="identities">Local display names</option></select></label><label>Page<select id="card-page"></select></label></div><div class="actions"><label class="inline-check"><input id="card-checks" type="checkbox" checked>Checks</label><label class="inline-check"><input id="card-bk" type="checkbox" checked>Longest BK</label></div><canvas id="finish-card-canvas" aria-label="Finish card preview"></canvas><button id="card-save" class="primary" type="button">Save PNG</button><p id="card-feedback" class="note" role="status"></p></dialog>
+  <dialog id="awards-dialog" aria-labelledby="awards-heading"><div class="heading"><h2 id="awards-heading">Race highlights</h2><button type="button" data-close="awards-dialog">Close</button></div><p class="note">Descriptive statistics, not a skill ranking across different games. Released runners remain in results but are excluded from completion awards.</p><div id="awards-content"></div><button id="awards-share" type="button">Include in result preview</button></dialog>
   <script src="timer-alerts.js"></script>
+  <script src="race-features.js"></script>
   <script src="run-timer-renderer.js"></script>
+  <script src="feature-controls.js"></script>
 </body>
 </html>

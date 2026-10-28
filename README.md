@@ -46,7 +46,34 @@ version and attaches the verified builds to that release after all checks pass.
 Publishing a release is a separate maintainer action; ordinary builds only
 produce temporary Actions artifacts. No signing secrets are required.
 
+Forgejo has a separate Windows build workflow in `.forgejo/workflows/`. It runs
+the same checks and produces the same four downloads as a Forgejo Actions
+artifact, using the native `windows-latest` runner label. If that runner is
+offline, jobs wait in the queue until it is available. Repository Actions must
+be enabled in Forgejo. The workflow does not publish or push to GitHub.
+
+## Repository layout
+
+- `src/`: application code and timer interface.
+- `assets/`: app icons; the ICO is used to build Windows executables.
+- `test/`: automated checks, including hidden UI checks.
+- `scripts/`: packaged-build verification and release download preparation.
+- `.github/workflows/`: Windows build and release automation.
+- `.forgejo/workflows/`: Windows builds for the private Forgejo copy.
+- `docs/`: [feature ideas](docs/FEATURE_IDEAS.md).
+
+The Windows downloads contain only the app, its runtime dependency, the runtime
+icon, and license information. Tests, development dependencies, documentation,
+build scripts, and workflows are not bundled into the application. `node_modules/`
+and `dist/` are generated locally and excluded from Git. To use the app, download
+a release asset; cloning this source repository is only needed for development.
+
 ## Shared runs
+
+The main timer remains first and prominent in every view. **Live race**, **History
+& racers**, **Profiles**, **Alerts & sounds**, and **Connection health** sit beneath
+it. See the [race tools guide](docs/RACE_TOOLS.md) for history, called-off runs,
+username links, finish cards, profiles, sound cues, previews and awards.
 
 The shared clock is the main view. **Timer only** opens a frameless, resizable
 window with no header. The clock, brief event alerts and personal BK timer scale
@@ -55,8 +82,13 @@ with the available width and height. Hover anywhere in the timer canvas to revea
 keyboard use. The overlay does not move the clocks or notifications.
 Drag the top edge to move the compact window and resize using its edges.
 **Full view** or **Escape** restores the previous window size.
-**Show Stats** on the timer restores the full window
-and reveals individual and group statistics; **Hide Stats** collapses them again.
+In **Timer only**, **Show Stats** opens a runner panel beneath the clock and
+slightly increases the window height. It shows each selected runner's recorded
+check count and Longest BK, including an ongoing gap if it is the longest so far.
+Up to six runners fit without scrolling; additional runners scroll inside that
+panel while the clock and notifications stay fixed. Live updates preserve your
+scroll position. **Hide Stats** collapses the panel and reduces the window height.
+In Full View, **Show Stats** reveals the detailed individual and group results.
 Race setup and runners collapse when a shared run starts. Reopen **Race setup &
 runners** whenever needed. The independent solo stopwatch is in its own expandable
 panel. Changing views does not pause the timer or stop event recording.
@@ -224,6 +256,38 @@ late joins and connection gaps may have incomplete counts and BK values. Automat
 collect can generate checks in other worlds without an unambiguous per-check
 marker, so those events can appear in the recorded statistics.
 
+## Share finished race results
+
+Once every selected runner has completed or released, **Copy results** and
+**Post to chat** appear beside the timer controls in both views. In Timer Only,
+hover over the clock or use Tab to reveal them. Nothing is copied or posted
+automatically.
+
+Both buttons now open **Result preview** first. Review the exact text, choose
+checks/BK/highlights and original versus local display names, then explicitly
+copy or post the preview. Recording warnings and completion/release labels are
+mandatory. A preview expires after 15 minutes; posting also verifies that its
+data has not changed and the connected room/team/session matches the saved run.
+Historical finished races can be previewed from History, but cannot be posted
+to an unrelated connected race. Called-off runs must be restored before sharing
+completed results. **Finish card** exports group or individual PNGs; group cards
+paginate at six runners rather than shrinking long rosters into unreadable text.
+
+Both options use the same summary: Total Group Time and group check count,
+followed by each runner's completion/release status, individual time, recorded
+check count, and Longest BK. Runner BK values below five minutes display **N/A**;
+exactly five minutes and longer display the recorded duration. Missing finish
+or BK times display **Unavailable**, not a guessed value.
+
+Copying works offline after results are available. Posting requires an active,
+fully loaded room connection and sends a header plus one printable chat line
+per runner, as the slot connected to this app. After sending, posting is disabled
+for that run in this app instance, including after reconnects. It is not a
+room-wide duplicate lock, and restarting the app allows posting again. Server
+delivery or display is not acknowledged by the chat protocol. The only chat
+messages the tracker sends are these explicitly requested results; it never
+sends gameplay checks, goal updates, or countdown commands.
+
 ## Solo stopwatch and local data
 
 The solo stopwatch has manual Start, Finish and Reset controls. It survives app
@@ -234,12 +298,24 @@ Settings live in `%APPDATA%\archipelago-timer-stat-tracker\settings.json`, separ
 from PO Launcher. The app does not read, change or import PO Launcher settings.
 Room passwords stay in memory only. There is no telemetry or automatic upload.
 
+Race history, local racer identities and profiles live beside settings in
+`race-history.sqlite` (with SQLite journal files). They are not packaged or
+included in Git. Unfinished runs retain their observations, without a guessed
+finish. The library remembers the room address and own slot locally for an
+explicit **Prepare resume** action; race exports omit that connection information
+and local identity links. JSON imports never overwrite an existing run's local
+tracking choice. The initial database schema is versioned; newer schemas are
+preserved and reported rather than overwritten by an older app.
+
 ## Verification
 
 `npm test` covers the protocol, shared starts, individual/group finishes,
 reconnection, missing timestamps, TLS upgrade and solo persistence using local
 fixtures. `npm run test:ui` exercises the real standalone Electron window and IPC
-against a local simulated room with a temporary app profile.
+against a local simulated room with a temporary app profile. UI checks run in a
+hidden, non-focusable window, using Chromium input emulation so they do not move
+the desktop pointer, steal focus, or interrupt other applications. Native window
+minimize/maximize actions are not exercised by this background check.
 
 Set `AP_TIMER_SELFTEST` to an absolute report path when launching a packaged app
 to run its isolated self-test. `AP_TIMER_SCREENSHOT` optionally specifies a PNG

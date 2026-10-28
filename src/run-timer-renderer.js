@@ -6,26 +6,32 @@ let rosterKey = '';
 let busy = false;
 let statsVisible = false;
 let timerOnly = false;
+let focusedStatsVisible = false;
+let sharingResults = false;
+let copiedUntil = 0;
 let renderedEvents = '';
 const timerAlerts = new TimerAlerts();
 
 function renderTimerPopup(serverNow) {
   const alert = timerAlerts.update({
     context: JSON.stringify([state.address, state.seed, state.team, state.session, state.run?.startedAt]),
-    ready: state.hydrated && state.connection === 'connected' && !!state.run,
-    enabled: timerOnly, events: state.events || [], runnerBKs: state.runnerBKs || [], ownSlot: state.slot,
+    ready: state.hydrated && state.connection === 'connected' && (!!state.run || state.featureSettings?.alerts.categories.ready.popup || state.featureSettings?.alerts.categories.ready.sound) && !state.trackingExcluded,
+    enabled: timerOnly || window.RaceFeatures?.notificationsEnabled(), events: state.events || [], runnerBKs: state.runnerBKs || [], ownSlot: state.slot,
     serverNow, now: performance.now(),
+    allowed: event => { const rule = window.RaceFeatures?.rule(event); return !rule || rule.popup || rule.sound; },
   });
+  window.RaceFeatures?.observeAlert(alert);
+  const visible = !!alert && (window.RaceFeatures?.rule(alert).popup ?? true) && (timerOnly || state.featureSettings?.alerts.fullView);
   const popup = $('timer-popup');
   if (alert) {
     popup.dataset.tone = ['goal', 'release', 'finish'].includes(alert.type) ? 'success' : '';
     const message = alert.type === 'bk' ? `${alert.name} has been BK for ${duration(serverNow - alert.since)} (no recorded checks).` : alert.message;
     if (popup.textContent !== message) popup.textContent = message;
   }
-  popup.classList.toggle('visible', !!alert);
-  popup.setAttribute('aria-hidden', String(!alert));
-  popup.dataset.event = alert?.id || '';
-  popup.dataset.type = alert?.type || '';
+  popup.classList.toggle('visible', visible);
+  popup.setAttribute('aria-hidden', String(!visible));
+  popup.dataset.event = visible ? alert.id : '';
+  popup.dataset.type = visible ? alert.type : '';
   popup.title = alert ? popup.textContent : '';
 }
 
@@ -72,7 +78,7 @@ function renderEvents(now) {
   }
   $('events-status').textContent = state.connection !== 'connected' ? state.run ? 'Offline · Events may be missing' : 'Not connected · Ready checks paused' :
     state.allFinished ? 'Race finished' : state.run ? now < state.run.startedAt ? 'Shared countdown' : 'Race in progress' : 'Ready room';
-  const bk = state.bk;
+  const bk = state.trackingExcluded ? null : state.bk;
   const elapsed = bk ? Math.max(0, now - bk.since) : 0;
   const bkActive = !!bk && elapsed >= bk.thresholdMs;
   $('bk-alert').hidden = !bkActive;
@@ -90,18 +96,33 @@ function renderEvents(now) {
 
 function updateView() {
   document.body.classList.toggle('timer-only', timerOnly);
+  const focusedStats = timerOnly && focusedStatsVisible && !!state?.run;
+  document.body.classList.toggle('focused-stats', focusedStats);
+  $('focused-stats').hidden = !focusedStats;
+  const rows = Math.min(6, state?.players.length || 0);
+  $('focused-stats').style.height = `${52 + rows * 32}px`;
   $('results').hidden = !statsVisible || !state?.run;
   $('show-stats').disabled = !state?.run;
-  $('show-stats').textContent = statsVisible ? 'Hide Stats' : 'Show Stats';
-  $('show-stats').setAttribute('aria-expanded', String(statsVisible));
+  const showingStats = timerOnly ? focusedStats : statsVisible;
+  $('show-stats').textContent = showingStats ? 'Hide Stats' : 'Show Stats';
+  $('show-stats').setAttribute('aria-expanded', String(showingStats));
+  $('show-stats').setAttribute('aria-controls', timerOnly ? 'focused-stats' : 'results');
   $('timer-only').textContent = timerOnly ? 'Full view' : 'Timer only';
   $('timer-only').setAttribute('aria-pressed', String(timerOnly));
+  $('copy-results').hidden = $('post-results').hidden = $('completed-tools').hidden = !state?.allFinished || !!state?.trackingExcluded;
+  $('copy-results').disabled = sharingResults;
+  $('copy-results').textContent = performance.now() < copiedUntil ? 'Copied!' : 'Copy results';
+  $('post-results').disabled = sharingResults || state?.connection !== 'connected' || !state?.hydrated || state?.resultsPosted;
+  $('post-results').textContent = state?.resultsPosted ? 'Posted to chat' : 'Post to chat';
+  $('post-results').title = state?.resultsPosted ? 'Results already sent from this app for this run.' : 'Send group time and each runner’s results to the connected Archipelago room.';
 }
 
 async function setTimerOnly(value) {
+  if (value) window.RaceFeatures?.closeHistory();
   const result = await invoke('view', { timerOnly: value });
   if (!result) return false;
   timerOnly = value;
+  focusedStatsVisible = false;
   if (value) statsVisible = false;
   updateView();
   window.scrollTo(0, 0);
@@ -128,11 +149,18 @@ function accept(next) {
   const hadRun = !!state?.run;
   state = next;
   if (!hadRun && state.run) $('race-setup').open = false;
-  if (hadRun && !state.run) { $('race-setup').open = true; statsVisible = false; }
+  if (hadRun && !state.run) {
+    $('share-status').hidden = true;
+    $('race-setup').open = true; statsVisible = false;
+    if (timerOnly && focusedStatsVisible) {
+      focusedStatsVisible = false;
+      invoke('view', { timerOnly: true, statsRows: 0 });
+    }
+  }
   clockAnchor = { server: state.serverNow, local: performance.now() };
   const key = JSON.stringify([state.seed, state.team, state.session, state.players.map(p => p.slot)]);
   if (key !== rosterKey) {
-    selected = new Set(state.players.filter(p => !p.stopped).map(p => p.slot));
+    selected = new Set(state.selectedSlots ?? state.players.filter(p => !p.stopped).map(p => p.slot));
     rosterKey = key;
   }
   if (!state.run) for (const p of state.players) if (p.stopped) selected.delete(p.slot);
@@ -186,6 +214,8 @@ function accept(next) {
     $('stats-time').textContent = state.allFinished ? formatTime(state.stats.elapsedMs) : 'In progress';
     $('stats-bk').textContent = state.allFinished ? formatTime(state.stats.longestBKMs) : 'In progress';
     $('runner-stats').replaceChildren();
+    const scrollTop = $('focused-stats-scroll').scrollTop;
+    $('focused-runner-stats').replaceChildren();
     for (const p of state.players) {
       const row = document.createElement('tr');
       row.id = `stats-${p.slot}`;
@@ -195,9 +225,19 @@ function accept(next) {
         const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
       }
       $('runner-stats').append(row);
+      const focusedRow = document.createElement('tr');
+      focusedRow.dataset.slot = p.slot;
+      const name = document.createElement('td'); name.textContent = p.name; name.title = p.name;
+      name.className = p.stopped ? 'complete' : '';
+      const checks = document.createElement('td'); checks.textContent = String(p.stats.checksCompleted);
+      const bk = document.createElement('td'); bk.dataset.bkSlot = p.slot;
+      focusedRow.append(name, checks, bk);
+      $('focused-runner-stats').append(focusedRow);
     }
+    $('focused-stats-scroll').scrollTop = scrollTop;
   }
   tick();
+  window.RaceFeatures?.accept(state);
 }
 
 function tick() {
@@ -208,6 +248,7 @@ function tick() {
   updateReadiness(now);
   renderEvents(now);
   renderTimerPopup(now);
+  window.RaceFeatures?.tick(now);
   $('clock-label').textContent = before ? 'STARTING IN' : 'GROUP ELAPSED';
   $('group-clock').textContent = before ? String(Math.ceil((run.startedAt - now) / 1000)) :
     run ? state.allFinished && state.groupFinishedAt === null ? '—:—:—' : duration((state.groupFinishedAt ?? now) - run.startedAt) : '00:00:00';
@@ -218,7 +259,13 @@ function tick() {
   const everyone = released ? 'Everyone finished · Includes released players' : 'Everyone completed';
   $('group-detail').textContent = run ? state.allFinished ? state.groupFinishedAt === null ? `${everyone} · Some finish times unavailable` : everyone :
     before ? run.source === 'archipelago-countdown' ? 'Following Archipelago room countdown' : 'Get ready · Shared start is scheduled' : `${count} / ${state.players.length} finished${state.connection !== 'connected' ? ' · Offline — clock continues' : ''}` : 'Select players, then start a shared countdown';
+  if (state.trackingExcluded) $('group-detail').textContent += ' · Excluded from local history tracking';
   for (const p of state.players) {
+    const bkCell = document.querySelector(`[data-bk-slot="${p.slot}"]`);
+    if (bkCell && p.stats) {
+      const longest = p.stopped ? p.stats.longestBKMs : Math.max(p.stats.recordedLongestBKMs, now - p.stats.lastCheckAt, 0);
+      bkCell.textContent = longest === null ? 'Unavailable' : duration(longest);
+    }
     const complete = p.stopped;
     const status = $(`status-${p.slot}`);
     status.textContent = p.completed ? 'Completed' : p.released ? 'Released' : before ? 'Ready' : run ? 'Running' : p.status === null ? 'Status unavailable' : isReady(p.slot, now) ? 'Ready' : 'Waiting';
@@ -241,6 +288,7 @@ $('start').addEventListener('click', async () => {
   if (state) accept(state);
 });
 $('export').addEventListener('click', () => invoke('export'));
+for (const action of ['copy-results', 'post-results']) $(action).addEventListener('click', () => window.RaceFeatures?.openPreview());
 for (const command of ['minimize', 'maximize', 'close']) $('window-' + command).addEventListener('click', () => invoke('window-command', command));
 $('ready').addEventListener('click', () => invoke('ready', { slots: [...selected], ready: !isReady(state.slot, clockAnchor.server + performance.now() - clockAnchor.local) }));
 $('require-ready').addEventListener('change', () => updateReadiness(clockAnchor.server + performance.now() - clockAnchor.local));
@@ -254,12 +302,19 @@ $('always-on-top').addEventListener('change', async () => {
 });
 $('timer-only').addEventListener('click', () => setTimerOnly(!timerOnly));
 $('show-stats').addEventListener('click', async () => {
-  if (timerOnly && !await setTimerOnly(false)) return;
+  if (timerOnly) {
+    const visible = !focusedStatsVisible;
+    if (!await invoke('view', { timerOnly: true, statsRows: visible ? Math.min(6, state.players.length) : 0 })) return;
+    focusedStatsVisible = visible;
+    updateView();
+    return;
+  }
   statsVisible = !statsVisible;
   updateView();
   if (statsVisible) $('results').scrollIntoView({ block: 'nearest' });
 });
 document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.querySelector('dialog[open]')) return;
   if (event.key === 'Escape' && timerOnly) { event.preventDefault(); setTimerOnly(false); }
 });
 for (const action of ['start', 'finish', 'reset']) $(`solo-${action}`).addEventListener('click', () => invoke('solo', action));
@@ -269,4 +324,18 @@ invoke('state').then(result => {
   for (const id of ['address', 'name', 'session']) if (result.preferences[id]) $(id).value = result.preferences[id];
 });
 setInterval(tick, 100);
+window.AppTimer = {
+  getState: () => state, invoke, setTimerOnly,
+  applyDraft(draft) {
+    for (const [id, value] of [['address', draft.address], ['name', draft.slotName], ['session', draft.session]]) if (typeof value === 'string') $(id).value = value;
+    if (draft.countdown !== undefined) $('countdown').value = String(draft.countdown);
+    if (draft.requireReady !== undefined) $('require-ready').checked = draft.requireReady;
+    $('password').value = '';
+  },
+  notifyShared(kind) {
+    if (kind === 'copy') { copiedUntil = performance.now() + 2000; updateView(); setTimeout(updateView, 2000); }
+    $('share-status').textContent = kind === 'copy' ? 'Results copied to clipboard.' : 'Results sent to Archipelago chat.';
+    $('share-status').hidden = false;
+  },
+};
 

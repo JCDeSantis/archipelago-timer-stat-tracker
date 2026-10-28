@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { WebSocketServer } = require('ws');
 const { once, EventEmitter } = require('node:events');
-const { RunTimer, serverAddress, sessionName, roomCountdownSeconds } = require('../run-timer');
+const { RunTimer, serverAddress, sessionName, roomCountdownSeconds } = require('../src/run-timer');
 
 async function until(predicate, message = 'condition', timeout = 3000) {
   const deadline = Date.now() + timeout;
@@ -54,7 +54,7 @@ async function room(t) {
           }
           fixture.store.set(packet.key, value);
           broadcast(packet.key, value);
-        } else assert.fail(`Unexpected gameplay command: ${packet.cmd}`);
+        } else if (packet.cmd !== 'Say' || !fixture.allowSay) assert.fail(`Unexpected gameplay command: ${packet.cmd}`);
       }
     });
   });
@@ -75,7 +75,8 @@ async function room(t) {
       item: { class: 'NetworkItem', player: slot, location, item: 123, flags: 0 } });
   };
   fixture.join = async (name = 'Player1', session = 'main', offset = 0) => {
-    const timer = new RunTimer({ clock: () => fixture.time + offset });
+    const timer = new RunTimer({ ...fixture.timerOptions, clock: () => fixture.time + offset });
+    if (fixture.expectedRun) timer.expectedRun = fixture.expectedRun;
     fixture.timers.push(timer);
     timer.connect({ address: fixture.address, name, session, password: 'secret' });
     try { await until(() => timer.connection === 'connected' || timer.connection === 'error', 'connection'); }
@@ -353,6 +354,33 @@ test('solo stopwatch persists, restores and resets independently of AP', () => {
   assert.equal(a.snapshot().run, null);
 });
 
+test('results chat is explicit, finished-only, connected-only and sent once per run', async t => {
+  const r = await room(t);
+  r.allowSay = true;
+  const a = await r.join();
+  assert.throws(() => a.postResults(), /once every/);
+  a.start([1, 2], 5);
+  await until(() => a.run);
+  assert.throws(() => a.postResults(), /once every/);
+  r.time += 11000;
+  r.goal(1);
+  r.event('Release', 2);
+  await until(() => a.snapshot().allFinished);
+  assert.equal(r.packets.filter(p => p.cmd === 'Say').length, 0, 'finishing never posts automatically');
+  a.postResults();
+  await until(() => r.packets.filter(p => p.cmd === 'Say').length === 3);
+  const messages = r.packets.filter(p => p.cmd === 'Say');
+  assert.match(messages[0].text, /Total Group Time: 00:00:06/);
+  assert.match(messages[1].text, /Player1 \(Completed\).*Checks: 0.*Longest BK: N\/A/);
+  assert.match(messages[2].text, /Player2 \(Released\).*Longest BK: N\/A/);
+  assert.ok(messages.every(p => p.text.startsWith('[Race results]') && !/[\p{C}\p{Zl}\p{Zp}]/u.test(p.text)));
+  assert.equal(a.snapshot().resultsPosted, true);
+  assert.throws(() => a.postResults(), /already been posted/);
+  a.disconnect();
+  assert.throws(() => a.postResults(), /Connect to/);
+  assert.ok(!r.packets.some(p => ['StatusUpdate', 'LocationChecks'].includes(p.cmd)));
+});
+
 test('run statistics count unique finder locations and calculate individual and group BK', async t => {
   const r = await room(t);
   const a = await r.join();
@@ -374,6 +402,8 @@ test('run statistics count unique finder locations and calculate individual and 
   r.check(1, 102);
   await until(() => a.snapshot().stats.checksCompleted === 3 && b.snapshot().stats.checksCompleted === 3);
   assert.equal(a.snapshot().stats.longestBKMs, null, 'BK finalizes at finish');
+  assert.equal(a.snapshot().players[0].stats.recordedLongestBKMs, 7000, 'recorded gaps are available before finishing');
+  assert.equal(a.snapshot().players[0].stats.lastCheckAt, a.run.startedAt + 9000);
   r.time += 1000; // Start + 10s.
   r.goal(1);
   await until(() => a.finishes[1] && b.finishes[1]);
@@ -383,10 +413,10 @@ test('run statistics count unique finder locations and calculate individual and 
   r.check(2, 102); // Release-generated checks are excluded.
   await until(() => a.finishes[2] && b.finishes[2]);
   assert.deepEqual(a.snapshot().players.map(p => p.stats), [
-    { checksCompleted: 2, elapsedMs: 10000, longestBKMs: 7000 },
-    { checksCompleted: 1, elapsedMs: 12000, longestBKMs: 7000 },
+    { checksCompleted: 2, elapsedMs: 10000, longestBKMs: 7000, recordedLongestBKMs: 7000, lastCheckAt: a.run.startedAt + 9000 },
+    { checksCompleted: 1, elapsedMs: 12000, longestBKMs: 7000, recordedLongestBKMs: 7000, lastCheckAt: a.run.startedAt + 5000 },
   ]);
-  assert.deepEqual(a.snapshot().stats, { checksCompleted: 3, elapsedMs: 12000, longestBKMs: 4000 });
+  assert.deepEqual(a.snapshot().stats, { checksCompleted: 3, elapsedMs: 12000, longestBKMs: 4000, recordedLongestBKMs: 4000, lastCheckAt: a.run.startedAt + 9000 });
   const late = await r.join();
   assert.deepEqual(late.snapshot().stats, a.snapshot().stats);
   assert.deepEqual(late.snapshot().players, a.snapshot().players);
@@ -400,7 +430,7 @@ test('no recorded checks uses the entire run as BK; unknown finishes stay unknow
   r.time += 11000;
   r.goal(1);
   await until(() => a.finishes[1]);
-  assert.deepEqual(a.snapshot().players[0].stats, { checksCompleted: 0, elapsedMs: 6000, longestBKMs: 6000 });
+  assert.deepEqual(a.snapshot().players[0].stats, { checksCompleted: 0, elapsedMs: 6000, longestBKMs: 6000, recordedLongestBKMs: 6000, lastCheckAt: a.run.startedAt });
   a.disconnect();
   r.goal(2);
   const b = await r.join();
@@ -542,6 +572,26 @@ test('release-generated RoomUpdate checks do not create a halfway event', async 
   await until(() => a.finishes[1]);
   assert.equal(a.snapshot().events.some(e => e.type === 'half'), false);
   assert.equal(a.snapshot().players[0].checkProgress.checked, 0);
+});
+
+test('saved-profile roster resolution is applied before following a room countdown', async t => {
+  const r = await room(t); r.timerOptions = { resolveRoster: () => [2] };
+  const a = await r.join();
+  assert.deepEqual(a.selectedSlots, [2]); r.countdown(5);
+  await until(() => a.run);
+  assert.deepEqual(a.run.players.map(p => p.slot), [2]);
+});
+
+test('historical resume rejects the wrong room and a changed shared start without replacing it', async t => {
+  const r = await room(t), a = await r.join(); a.start([1, 2], 5); await until(() => a.run);
+  const start = a.run.startedAt;
+  r.expectedRun = { seed: 'wrong-seed', team: 0, startedAt: start };
+  const wrongRoom = await r.join(); assert.equal(wrongRoom.connection, 'error'); assert.match(wrongRoom.message, /original room/);
+  r.expectedRun = { seed: 'test-seed', team: 0, startedAt: start + 1 };
+  const wrongStart = await r.join(); assert.equal(wrongStart.connection, 'error'); assert.match(wrongStart.message, /historical shared start/);
+  assert.equal(r.store.get(a.key).startedAt, start);
+  r.expectedRun.startedAt = start;
+  const resumed = await r.join(); assert.equal(resumed.run.startedAt, start); assert.equal(resumed.hydrated, true);
 });
 
 test('countdown parsing trusts server countdowns and exact announcements, never player chat', () => {

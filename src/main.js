@@ -4,12 +4,15 @@ const path = require('path');
 const os = require('os');
 const { RunTimer } = require('./run-timer');
 const { Settings } = require('./settings');
+const { FeatureService } = require('./feature-service');
 
 const TITLE = 'Archipelago Timer and Stat Tracker';
 // The floating level can lose its topmost flag when Electron reorders behind
 // the Windows taskbar. This documented level keeps the native flag intact.
 const TOP_LEVEL = process.platform === 'win32' ? 'pop-up-menu' : 'floating';
 const SELFTEST = process.env.AP_TIMER_SELFTEST;
+const BACKGROUND_TEST = !!SELFTEST || process.env.AP_TIMER_BACKGROUND_TEST === '1';
+if (BACKGROUND_TEST) app.disableHardwareAcceleration();
 app.setName(TITLE);
 app.setAppUserModelId('com.jcdesantis.archipelago-timer-stat-tracker');
 // This app has its own profile and never reads or writes PO Launcher settings.
@@ -19,28 +22,34 @@ app.setPath('userData', process.env.AP_TIMER_USER_DATA || (SELFTEST
 
 let window = null;
 let fullViewBounds = null;
+let focusedStatsHeight = 0;
 const settings = new Settings(app.getPath('userData'));
-const timer = new RunTimer({ solo: settings.value.solo, saveSolo: solo => settings.save({ solo }), followRoomCountdown: settings.value.followRoomCountdown !== false });
-const appState = () => ({ ...timer.snapshot(), alwaysOnTop: window?.isAlwaysOnTop() ?? settings.value.alwaysOnTop === true });
+let features;
+const timer = new RunTimer({ solo: settings.value.solo, saveSolo: solo => settings.save({ solo }), followRoomCountdown: settings.value.followRoomCountdown !== false,
+  resolveRoster: players => features?.resolveRoster(players) });
+features = new FeatureService({ directory: app.getPath('userData'), settings, timer, getWindow: () => window, backgroundTest: BACKGROUND_TEST });
+const appState = () => ({ ...features.decorate(timer.snapshot()), alwaysOnTop: window?.isAlwaysOnTop() ?? settings.value.alwaysOnTop === true });
 timer.on('change', state => {
+  features.observe(state);
   if (state.connection === 'connected' && settings.value.connection?.address !== state.address) {
     settings.save({ connection: { address: state.address, name: timer.options.name, session: state.session } });
   }
-  if (window && !window.isDestroyed()) window.webContents.send('run-timer-state', { ...state, alwaysOnTop: window.isAlwaysOnTop() });
+  if (window && !window.isDestroyed()) window.webContents.send('run-timer-state', appState());
 });
 
 function createWindow() {
   window = new BrowserWindow({
     width: 900, height: 900, minWidth: 640, minHeight: 600,
     frame: false,
-    title: TITLE, backgroundColor: '#141517', icon: path.join(__dirname, 'assets', 'icon.png'),
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'run-timer-preload.js') },
+    show: !BACKGROUND_TEST, focusable: !BACKGROUND_TEST, skipTaskbar: BACKGROUND_TEST,
+    title: TITLE, backgroundColor: '#141517', icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, offscreen: BACKGROUND_TEST, backgroundThrottling: !BACKGROUND_TEST, preload: path.join(__dirname, 'run-timer-preload.js') },
   });
   window.setMenuBarVisibility(false);
   window.setAlwaysOnTop(settings.value.alwaysOnTop === true, TOP_LEVEL);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.loadFile('run-timer.html');
+  window.loadFile(path.join(__dirname, 'run-timer.html'));
   window.on('closed', () => { window = null; });
   return window;
 }
@@ -49,13 +58,15 @@ ipcMain.handle('run-timer-action', async (event, action, input) => {
   if (!window || event.sender !== window.webContents) throw new Error('Timer access denied.');
   try {
     if (action === 'state') return { state: appState(), preferences: settings.value.connection || {} };
+    if (features.handles(action)) return { ...await features.handle(action, input), state: appState() };
     if (action === 'connect') {
+      features.beforeConnect(input);
       timer.connect(input);
       settings.save({ connection: { address: timer.options.address, name: timer.options.name, session: timer.options.session } });
     } else if (action === 'disconnect') timer.disconnect();
     else if (action === 'start') timer.start(input?.slots, input?.countdown, input?.requireReady ?? false);
     else if (action === 'ready') timer.ready(input?.slots, input?.ready);
-    else if (action === 'selection') timer.select(input);
+    else if (action === 'selection') { timer.select(input); features.rosterIssues = []; features.activeRoster = null; }
     else if (action === 'follow-countdown') {
       timer.followCountdown(input);
       settings.save({ followRoomCountdown: input });
@@ -74,16 +85,29 @@ ipcMain.handle('run-timer-action', async (event, action, input) => {
     }
     else if (action === 'view') {
       if (typeof input?.timerOnly !== 'boolean') throw new Error('Invalid timer view.');
+      const rows = input.statsRows ?? 0;
+      if (!Number.isInteger(rows) || rows < 0 || rows > 6) throw new Error('Invalid focused stats size.');
       if (input.timerOnly && !fullViewBounds) {
         fullViewBounds = { bounds: window.getBounds(), maximized: window.isMaximized() };
         if (fullViewBounds.maximized) window.unmaximize();
         window.setMinimumSize(360, 200);
         window.setSize(560, 280);
+        focusedStatsHeight = 0;
       } else if (!input.timerOnly && fullViewBounds) {
         window.setMinimumSize(640, 600);
         window.setBounds(fullViewBounds.bounds);
         if (fullViewBounds.maximized) window.maximize();
         fullViewBounds = null;
+        focusedStatsHeight = 0;
+      }
+      if (input.timerOnly && fullViewBounds) {
+        const nextHeight = rows ? 52 + rows * 32 : 0;
+        if (nextHeight !== focusedStatsHeight) {
+          const [width, height] = window.getContentSize();
+          window.setMinimumSize(360, 200 + nextHeight);
+          window.setContentSize(width, height + nextHeight - focusedStatsHeight);
+          focusedStatsHeight = nextHeight;
+        }
       }
     }
     else if (action === 'export') {
@@ -121,12 +145,15 @@ async function selfTest() {
     if (window.webContents.isLoading()) await new Promise(resolve => window.webContents.once('did-finish-load', resolve));
     const result = await window.webContents.executeJavaScript(`(async () => {
       const initial = await window.runTimer.invoke('state');
+      const library = await window.runTimer.invoke('library-meta');
       const topOn = await window.runTimer.invoke('always-on-top', true);
       const topOff = await window.runTimer.invoke('always-on-top', false);
       const started = await window.runTimer.invoke('solo', 'start');
       const finished = await window.runTimer.invoke('solo', 'finish');
       await window.runTimer.invoke('solo', 'reset');
       return { title: document.title, node: typeof require, state: !!initial.state, initialTop: initial.state?.alwaysOnTop,
+        library: !initial.state?.historyError && Array.isArray(library.racers) && Array.isArray(library.profiles),
+        features: typeof window.RaceFeatures === 'object' && !!document.getElementById('share-results-dialog') && document.getElementById('timer-stage').getBoundingClientRect().top < document.getElementById('workspace-nav').getBoundingClientRect().top,
         top: topOn.state?.alwaysOnTop === true && topOff.state?.alwaysOnTop === false,
         solo: !!started.state?.solo && Number.isFinite(finished.state?.solo?.finishedAt) };
     })()`);
@@ -138,6 +165,8 @@ async function selfTest() {
       'native always-on-top': result.top,
       'frameless window canvas': Math.abs(window.getBounds().height - window.getContentBounds().height) <= 4,
       'own settings profile': path.basename(app.getPath('userData')).startsWith('ap-timer-selftest-'),
+      'local SQLite library': result.library,
+      'timer-first feature controls': result.features,
     };
     report.initialAlwaysOnTop = result.initialTop;
     if (process.env.AP_TIMER_SCREENSHOT) {
@@ -149,17 +178,18 @@ async function selfTest() {
   fs.writeFileSync(SELFTEST, JSON.stringify(report, null, 2));
   timer.disconnect();
   settings.flush();
+  features.close();
   app.exit(report.ok ? 0 : 1);
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => {
-    if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
+    if (window && !BACKGROUND_TEST) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
   });
   app.whenReady().then(() => { createWindow(); if (SELFTEST) selfTest(); });
 }
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { timer.disconnect(); settings.flush(); });
+app.on('before-quit', () => { timer.disconnect(); settings.flush(); features.close(); });
 
 module.exports = { createWindow };

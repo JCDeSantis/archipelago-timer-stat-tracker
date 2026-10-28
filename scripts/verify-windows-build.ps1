@@ -33,6 +33,10 @@ $names = @(
     'Archipelago-Timer-and-Stat-Tracker-Setup.exe',
     "Archipelago-Timer-and-Stat-Tracker-$version-x64.zip"
 )
+# Keep this generated staging folder to one version's downloads.
+Get-ChildItem -LiteralPath $downloads -File -Filter '*.zip' |
+    Where-Object { $_.Name -match '^Archipelago-Timer-and-Stat-Tracker-\d+\.\d+\.\d+(?:-[\w.-]+)?-x64\.zip$' -and $_.Name -notin $names } |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName }
 $checksums = foreach ($name in $names) {
     $source = Join-Path $outputRoot $name
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Missing build: $name" }

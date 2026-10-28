@@ -2,6 +2,16 @@ node_modules/
 dist/
 *.log
 
+# Keep release downloads out of Git even if copied outside dist/.
+Archipelago-Timer-and-Stat-Tracker-*.exe
+Archipelago-Timer-and-Stat-Tracker-*.zip
+*.blockmap
+*.sqlite
+*.sqlite-*
+*.race.json
+*.profile.json
+archipelago-finish-card*.png
+
 # Local instructions and machine-specific files are never published.
 /AGENTS.md
 .env

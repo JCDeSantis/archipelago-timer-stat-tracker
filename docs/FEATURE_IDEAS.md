@@ -1,6 +1,9 @@
 # Feature ideas
 
-These are proposed additions, not features currently enabled in the app.
+History, linked usernames, alert preferences, finish cards, connection health,
+race profiles, countdown sounds, result preview and race highlights are now
+available; see [Race tools](RACE_TOOLS.md). The list below preserves the original
+ideas, including follow-up work within those areas.
 
 1. **Saved race history.** Keep a local library of runs with seed, roster, times,
    check counts, releases and BK results, with incomplete recordings clearly marked.
@@ -39,6 +42,6 @@ These are proposed additions, not features currently enabled in the app.
 18. **Appearance presets.** Save clock fonts, colors and display density in
     Settings so users can tune a stream or race layout themselves.
 
-Suggested starting order: saved race history, alert preferences, then the
-finishing-order board. These give racers useful control and results before
-adding deeper comparisons or stream integrations.
+Suggested next additions: personal-best comparisons, custom splits, check-pace
+graphs, then an OBS overlay. A shared countdown-cancel action remains separate
+from the optional countdown audio already available.
