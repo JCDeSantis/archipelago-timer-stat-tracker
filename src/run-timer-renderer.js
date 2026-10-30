@@ -8,9 +8,31 @@ let statsVisible = false;
 let timerOnly = false;
 let focusedStatsVisible = false;
 let sharingResults = false;
+let requestedStatsRows = null;
+const compactRoster = () => CompactStats.compactPlayers(state?.players || [], state?.compactSettings, state?.slot);
+const compactRows = () => Math.max(1,Math.min(6,compactRoster().length));
 let copiedUntil = 0;
 let renderedEvents = '';
 const timerAlerts = new TimerAlerts();
+const runnerStatusLabels = {playing: 'Playing', waiting: 'Waiting', break: 'Break', gomode: 'Go mode'};
+let statusSharing = false;
+function closeQuickStatus(focus = false) {
+  $('quick-status-options').hidden = true;
+  $('quick-status-toggle').setAttribute('aria-expanded', 'false');
+  if (focus) $('quick-status-toggle').focus({ preventScroll: true });
+}
+function updateQuickStatus() {
+  const own = state?.players.find(p => p.slot === state.slot);
+  const enabled = state?.connection === 'connected' && state.hydrated && own && !own.stopped && !state.trackingExcluded;
+  $('quick-status').hidden = !!own?.stopped;
+  $('quick-status-toggle').disabled = !enabled || statusSharing;
+  $('quick-status-toggle').title = 'Your status: ' + (runnerStatusLabels[own?.runnerContext?.state] || 'Not declared');
+  for (const button of document.querySelectorAll('[data-quick-status]')) {
+    button.disabled = !enabled || statusSharing;
+    button.setAttribute('aria-pressed', String(button.dataset.quickStatus === own?.runnerContext?.state));
+  }
+  if (!enabled || !timerOnly) closeQuickStatus();
+}
 
 function renderTimerPopup(serverNow) {
   const alert = timerAlerts.update({
@@ -24,8 +46,12 @@ function renderTimerPopup(serverNow) {
   const visible = !!alert && (window.RaceFeatures?.rule(alert).popup ?? true) && (timerOnly || state.featureSettings?.alerts.fullView);
   const popup = $('timer-popup');
   if (alert) {
-    popup.dataset.tone = ['goal', 'release', 'finish'].includes(alert.type) ? 'success' : '';
-    const message = alert.type === 'bk' ? `${alert.name} has been BK for ${duration(serverNow - alert.since)} (no recorded checks).` : alert.message;
+    popup.dataset.tone = ['goal', 'release', 'finish', 'recovery'].includes(alert.type) ? 'success' : '';
+    const declared = { playing: 'Playing', waiting: 'Waiting on an item', break: 'Taking a break', gomode: 'Go mode' }[alert.context?.state];
+    const text = alert.type === 'bk' ? `${alert.name} has been BK for ${duration(alert.at - alert.since)} (no recorded checks).${declared ? ` Declared: ${declared}.` : ''}` : alert.message;
+    const timestamp = alertTimestamp(alert.at, state.run?.startedAt);
+    const message = `[${timestamp}] ${text}`;
+    popup.dataset.timestamp = timestamp;
     if (popup.textContent !== message) popup.textContent = message;
   }
   popup.classList.toggle('visible', visible);
@@ -85,21 +111,32 @@ function renderEvents(now) {
   $('compact-bk').hidden = !bkActive;
   document.body.classList.toggle('has-bk', bkActive);
   if (bk) {
+    const context = state.players.find(p => p.slot === state.slot)?.runnerContext;
+    const label = {playing:'Playing',waiting:'Waiting on an item',break:'Taking a break',gomode:'Go mode'}[context?.state];
+    const compactLabel = $('compact-bk').querySelector('span');
+    compactLabel.textContent = label ? `BK Timer · ${label}` : 'BK Timer';
+    compactLabel.title = context?.detail || '';
     $('bk-clock').textContent = duration(elapsed);
     $('compact-bk-clock').textContent = duration(elapsed);
     $('compact-bk').title = state.connection === 'connected' ? 'Time since your last recorded check, or the race start before your first check.' :
       'Offline: based on your last recorded check; new checks may be missing.';
-    $('bk-detail').textContent = state.connection === 'connected' ? 'Since your last recorded check (or the race start if you have no checks).' :
+    $('bk-detail').textContent = state.connection === 'connected' ? 'Since your last recorded check (or the race start if you have no checks).' + (state.players.find(p => p.slot === state.slot)?.runnerContext ? ' Declared: ' + state.players.find(p => p.slot === state.slot).runnerContext.state + '.' : '') :
       'Offline · Based on your last recorded check; new checks may be missing.';
   }
 }
 
 function updateView() {
+  updateQuickStatus();
   document.body.classList.toggle('timer-only', timerOnly);
   const focusedStats = timerOnly && focusedStatsVisible && !!state?.run;
   document.body.classList.toggle('focused-stats', focusedStats);
   $('focused-stats').hidden = !focusedStats;
-  const rows = Math.min(6, state?.players.length || 0);
+  const rows = compactRows();
+  if(focusedStats && requestedStatsRows !== rows) { requestedStatsRows=rows; queueMicrotask(async()=>{ if(!timerOnly || !focusedStatsVisible || requestedStatsRows!==rows) return; try { const result=await window.runTimer.invoke('view',{timerOnly:true,statsRows:rows}); if(result.error) $('error').textContent=result.error; } catch(error) { $('error').textContent=error.message; } }); }
+  if(!focusedStats) requestedStatsRows=null;
+  const columns=CompactStats.compactPreferences(state?.compactSettings).columns;
+  const visible=columns.filter(c=>['checks','hints','bk'].includes(c)).length;
+  document.querySelectorAll('#focused-stats th').forEach((th,i)=>{ const c=[null,'checks','hints','bk'][i]; th.hidden=!!c&&!columns.includes(c); th.style.width=i===0 ? (visible?'40%':'100%') : `${60/Math.max(1,visible)}%`; });
   $('focused-stats').style.height = `${52 + rows * 32}px`;
   $('results').hidden = !statsVisible || !state?.run;
   $('show-stats').disabled = !state?.run;
@@ -170,7 +207,7 @@ function accept(next) {
   if (!active) $('connection-details').open = true;
   $('connection').textContent = state.connection[0].toUpperCase() + state.connection.slice(1);
   $('connection').className = `badge ${state.connection}`;
-  for (const id of ['address', 'name', 'password', 'session', 'connect']) $(id).disabled = active;
+  for (const id of ['address', 'trackerUrl', 'name', 'password', 'session', 'connect']) $(id).disabled = active;
   $('disconnect').disabled = !active;
   $('always-on-top').checked = state.alwaysOnTop === true;
   $('follow-room-countdown').checked = state.followRoomCountdown !== false;
@@ -225,15 +262,36 @@ function accept(next) {
         const cell = document.createElement('td'); cell.textContent = value; row.append(cell);
       }
       $('runner-stats').append(row);
+    }
+    const compactColumns=CompactStats.compactPreferences(state.compactSettings).columns;
+    for(const p of compactRoster()) {
       const focusedRow = document.createElement('tr');
       focusedRow.dataset.slot = p.slot;
-      const name = document.createElement('td'); name.textContent = p.name; name.title = p.name;
+      const name = document.createElement('td'); name.title = `${p.name} — ${p.game}`;
+      const nameLine = document.createElement('span'); nameLine.className = 'runner-name-line';
+      const nameText = document.createElement('span'); nameText.className = 'runner-name'; nameText.textContent = p.name;
+      nameLine.append(nameText);
+      const label = p.completed ? 'Completed' : p.released ? 'Released' : runnerStatusLabels[p.runnerContext?.state];
+      if (label && compactColumns.includes('status')) {
+        const badge = document.createElement('span'); badge.className = 'runner-status';
+        badge.dataset.state = p.stopped ? 'finished' : p.runnerContext.state;
+        badge.textContent = label;
+        badge.title = `${p.name}: ${label}${!p.stopped && p.runnerContext?.state === 'waiting' && p.runnerContext.detail ? ' — ' + p.runnerContext.detail : ''}`;
+        nameLine.append(badge);
+      }
+      name.append(nameLine);
+      const game = document.createElement('small'); game.className = 'runner-game'; game.textContent = p.game; game.title = p.game; game.hidden=!compactColumns.includes('game'); name.append(game);
       name.className = p.stopped ? 'complete' : '';
-      const checks = document.createElement('td'); checks.textContent = String(p.stats.checksCompleted);
+      const checks = document.createElement('td'); checks.textContent = p.checkProgress ? `${p.checkProgress.checked} / ${p.checkProgress.total}` : `${p.stats.checksCompleted} / ?`;
+      checks.title = checks.textContent + ' · ' + (p.checkProgress ? 'Server world progress (includes checks before this race and release/collect).' : 'World total unavailable. Showing recorded race checks only.');
+      const hints = document.createElement('td'); hints.textContent = Number.isSafeInteger(p.hintsUsed) ? String(p.hintsUsed) : '—'; hints.dataset.hintsSlot = p.slot;
+      hints.title = Number.isSafeInteger(p.hintsUsed) ? 'Purchased hints calculated from server-confirmed points and checks.' : 'Hint purchases unavailable: free hints or insufficient server data.';
       const bk = document.createElement('td'); bk.dataset.bkSlot = p.slot;
-      focusedRow.append(name, checks, bk);
+      checks.hidden=!compactColumns.includes('checks'); hints.hidden=!compactColumns.includes('hints'); bk.hidden=!compactColumns.includes('bk');
+      focusedRow.append(name, checks, hints, bk);
       $('focused-runner-stats').append(focusedRow);
     }
+    if(!compactRoster().length) { const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.textContent='No matching runners.';tr.append(td);$('focused-runner-stats').append(tr); }
     $('focused-stats-scroll').scrollTop = scrollTop;
   }
   tick();
@@ -277,7 +335,7 @@ function tick() {
 
 $('connect-form').addEventListener('submit', async event => {
   event.preventDefault();
-  await invoke('connect', { address: $('address').value, name: $('name').value, password: $('password').value, session: $('session').value });
+  await invoke('connect', { address: $('address').value, name: $('name').value, password: $('password').value, session: $('session').value, trackerUrl: $('trackerUrl').value });
   $('password').value = '';
 });
 $('disconnect').addEventListener('click', () => invoke('disconnect'));
@@ -300,11 +358,28 @@ $('always-on-top').addEventListener('change', async () => {
   const result = await invoke('always-on-top', $('always-on-top').checked);
   if (!result) $('always-on-top').checked = state?.alwaysOnTop === true;
 });
+$('quick-status-toggle').addEventListener('click', () => {
+  const open = $('quick-status-options').hidden;
+  $('quick-status-options').hidden = !open;
+  $('quick-status-toggle').setAttribute('aria-expanded', String(open));
+  $('quick-status-feedback').hidden = true;
+  if (open) $('quick-status-options').querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+});
+for (const button of document.querySelectorAll('[data-quick-status]')) button.addEventListener('click', async () => {
+  const own = state?.players.find(p => p.slot === state.slot);
+  statusSharing = true; updateQuickStatus();
+  const result = await invoke('runner-context', { state: button.dataset.quickStatus, detail: button.dataset.quickStatus === 'waiting' ? own?.runnerContext?.detail || '' : '' });
+  statusSharing = false; updateQuickStatus();
+  if (result) closeQuickStatus(true);
+  else { $('quick-status-feedback').hidden = false; $('quick-status-feedback').textContent = $('error').textContent || 'Unable to share status.'; }
+});
+document.addEventListener('click', event => { if (!$('quick-status').contains(event.target)) closeQuickStatus(); });
+document.addEventListener('focusin', event => { if (!$('quick-status').contains(event.target)) closeQuickStatus(); });
 $('timer-only').addEventListener('click', () => setTimerOnly(!timerOnly));
 $('show-stats').addEventListener('click', async () => {
   if (timerOnly) {
     const visible = !focusedStatsVisible;
-    if (!await invoke('view', { timerOnly: true, statsRows: visible ? Math.min(6, state.players.length) : 0 })) return;
+    if (!await invoke('view', { timerOnly: true, statsRows: visible ? compactRows() : 0 })) return;
     focusedStatsVisible = visible;
     updateView();
     return;
@@ -315,13 +390,24 @@ $('show-stats').addEventListener('click', async () => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && document.querySelector('dialog[open]')) return;
+  if (event.key === 'Escape' && !$('quick-status-options').hidden) { event.preventDefault(); closeQuickStatus(true); return; }
   if (event.key === 'Escape' && timerOnly) { event.preventDefault(); setTimerOnly(false); }
 });
 for (const action of ['start', 'finish', 'reset']) $(`solo-${action}`).addEventListener('click', () => invoke('solo', action));
+let hotkeyFeedbackTimer;
+window.runTimer.onHotkey(message => {
+  if(!message.error && ['stats','compact'].includes(message.action)) {
+    if(document.querySelector('dialog[open]')) message={...message,error:'Close the open dialog before changing the timer view.'};
+    else if(message.action==='stats') $('show-stats').click();
+    else setTimerOnly(!timerOnly);
+  }
+  $('hotkey-feedback').textContent=message.error || (message.action==='mute' ? (state?.soundsMuted?'Sounds muted':'Sounds unmuted') : `Shortcut: ${runnerStatusLabels[message.action] || message.action}`);
+  $('hotkey-feedback').hidden=false;clearTimeout(hotkeyFeedbackTimer);hotkeyFeedbackTimer=setTimeout(()=>$('hotkey-feedback').hidden=true,4000);
+});
 window.runTimer.onState(accept);
 invoke('state').then(result => {
   if (!result) return;
-  for (const id of ['address', 'name', 'session']) if (result.preferences[id]) $(id).value = result.preferences[id];
+  for (const id of ['address', 'name', 'session', 'trackerUrl']) if (result.preferences[id]) $(id).value = result.preferences[id];
 });
 setInterval(tick, 100);
 window.AppTimer = {
@@ -331,6 +417,7 @@ window.AppTimer = {
     if (draft.countdown !== undefined) $('countdown').value = String(draft.countdown);
     if (draft.requireReady !== undefined) $('require-ready').checked = draft.requireReady;
     $('password').value = '';
+    $('trackerUrl').value = draft.trackerUrl || '';
   },
   notifyShared(kind) {
     if (kind === 'copy') { copiedUntil = performance.now() + 2000; updateView(); setTimeout(updateView, 2000); }

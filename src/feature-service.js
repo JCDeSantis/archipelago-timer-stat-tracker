@@ -3,12 +3,14 @@ const { randomUUID } = require('crypto');
 const { RaceLibrary, recordId } = require('./race-library');
 const { SoundLibrary } = require('./sound-library');
 const { featurePreferences } = require('./race-features');
+const { compactPreferences } = require('./compact-stats');
+const { reviewTimeline, compareRaces } = require('./race-review');
 const { raceResultLines } = require('./race-results');
 const { serverAddress, sessionName } = require('./run-timer');
 
 const actions = new Set(['library-meta', 'history-list', 'history-get', 'history-track', 'history-rename', 'history-import', 'history-export', 'history-resume',
   'racer-create', 'alias-add', 'alias-remove', 'runner-assign', 'profile-save', 'profile-delete', 'profile-apply', 'profile-export', 'profile-import',
-  'feature-settings', 'sound-list', 'sound-import', 'sound-read', 'sound-remove', 'preview-results', 'copy-preview', 'post-preview', 'copy-results', 'post-results', 'save-card']);
+  'compact-settings', 'race-review', 'comparison-list', 'race-compare', 'feature-settings', 'sound-list', 'sound-import', 'sound-read', 'sound-remove', 'preview-results', 'copy-preview', 'post-preview', 'copy-results', 'post-results', 'save-card']);
 
 class FeatureService {
   constructor({ directory, settings, timer, getWindow, backgroundTest = false, desktop }) {
@@ -29,7 +31,7 @@ class FeatureService {
     catch (error) { this.storageError = error.message; }
     const quality = { uncertain: !!this.storageError || !!data?.lateJoin || !!data?.importedLegacy || !!data?.gaps.length,
       lateJoin: !!data?.lateJoin, gaps: data?.gaps || [], lastSeenAt: data?.lastSeenAt || null };
-    return { ...state, featureSettings: this.preferences(), activeHistoryId: id, trackingExcluded: !!row?.excluded,
+    return { ...state, compactSettings: compactPreferences(this.settings.value.compact), soundsMuted: this.soundsMuted === true, featureSettings: this.preferences(), activeHistoryId: id, trackingExcluded: !!row?.excluded,
       recordQuality: quality, libraryRevision: this.library?.revision || 0, historyError: this.storageError || '',
       profileRosterIssues: this.rosterIssues, preferredTimerOnly: this.settings.value.profileTimerOnly === true,
       backgroundTest: this.backgroundTest };
@@ -74,6 +76,13 @@ class FeatureService {
   }
   async handle(action, input = {}) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid feature request.');
+    if (action === 'compact-settings') { this.settings.save({compact:compactPreferences(input)}); return {}; }
+    if (action === 'race-review') { const record=this.record(input.id); return {record, timeline:reviewTimeline(record,input)}; }
+    if (action === 'comparison-list') {
+      const record=this.record(input.id);
+      return { records:this.requiredLibrary().list({filter:'all'}).filter(r=>r.id !== record.id && !r.excluded).filter(r=>{const b=this.library.get(r.id);return b.seed===record.seed&&b.team===record.team;}) };
+    }
+    if (action === 'race-compare') { const current=this.record(input.id),baseline=this.requiredLibrary().get(input.baselineId);return {comparison:compareRaces(current,baseline),baseline}; }
     if (action === 'sound-list') return { sounds: this.sounds.list(), soundError: this.sounds.error || '' };
     if (action === 'sound-import') {
       const result = await this.desktop.dialog.showOpenDialog(this.getWindow(), { properties: ['openFile'], filters: [{ name: 'Audio (10 MB maximum)', extensions: ['wav', 'mp3', 'ogg', 'flac', 'm4a', 'webm'] }] });

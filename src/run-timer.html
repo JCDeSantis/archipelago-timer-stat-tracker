@@ -14,20 +14,22 @@
       <div class="compact-drag" aria-hidden="true"></div>
       <div class="clock-card"><p class="eyebrow" id="clock-label">GROUP ELAPSED</p><div id="group-clock" class="clock" role="timer">00:00:00</div><p id="group-detail" class="muted">Waiting for a shared start</p>
         <button id="health-indicator" type="button" aria-label="Connection and recording health">Not connected</button>
+        <p id="hotkey-feedback" role="status" hidden></p>
         <div id="timer-popup" class="timer-popup" role="status" aria-live="polite" aria-atomic="true" aria-hidden="true"></div>
         <div id="compact-bk" class="compact-bk" hidden><span>BK Timer</span><strong id="compact-bk-clock" role="timer" aria-label="Time since your last recorded check">00:05:00</strong></div>
-        <div class="timer-toolbar" aria-label="Timer view controls"><button id="show-stats" type="button" aria-controls="results" aria-expanded="false">Show Stats</button><button id="timer-only" type="button" aria-pressed="false" title="Toggle timer-only mode. Escape returns to the full view.">Timer only</button><button id="copy-results" type="button" hidden>Copy results</button><button id="post-results" type="button" hidden>Post to chat</button></div>
+        <div class="timer-toolbar" aria-label="Timer view controls"><button id="show-stats" type="button" aria-controls="results" aria-expanded="false">Show Stats</button><button id="timer-only" type="button" aria-pressed="false" title="Toggle timer-only mode. Escape returns to the full view.">Timer only</button><div id="quick-status" class="quick-status"><button id="quick-status-toggle" type="button" aria-expanded="false" aria-controls="quick-status-options" title="Change your declared runner status">Status</button><div id="quick-status-options" role="group" aria-label="Your runner status" hidden><button type="button" data-quick-status="playing">Playing</button><button type="button" data-quick-status="waiting">Waiting</button><button type="button" data-quick-status="break">Taking a break</button><button type="button" data-quick-status="gomode">Go mode</button><span id="quick-status-feedback" role="status" hidden></span></div></div><button id="copy-results" type="button" hidden>Copy results</button><button id="post-results" type="button" hidden>Post to chat</button></div>
         <p id="share-status" class="muted" role="status" aria-live="polite" hidden></p>
       </div>
       <div id="focused-stats" aria-label="Runner statistics" hidden>
-        <div id="focused-stats-scroll" tabindex="0" role="region" aria-label="Runner statistics, scroll for more runners"><table><thead><tr><th scope="col">Runner</th><th scope="col">Checks</th><th scope="col">Longest BK</th></tr></thead><tbody id="focused-runner-stats"></tbody></table></div>
+        <div id="focused-stats-scroll" tabindex="0" role="region" aria-label="Runner statistics, scroll for more runners"><table><thead><tr><th scope="col">Runner / game</th><th scope="col" title="World checks completed / total. A question mark means the world total is unavailable; the numerator is then recorded race checks only.">Checks</th><th scope="col" title="Purchased hints calculated from the server’s check count and hint-point balance. Free hints or missing server data show unavailable.">Hints Used</th><th scope="col">Longest BK</th></tr></thead><tbody id="focused-runner-stats"></tbody></table></div>
       </div>
     </section>
-    <nav id="workspace-nav" aria-label="Race tools"><button type="button" data-workspace="live" aria-pressed="true">Live race</button><button type="button" data-workspace="history" aria-pressed="false">History &amp; racers</button><button type="button" data-workspace="profiles" aria-pressed="false">Profiles</button><button type="button" data-workspace="alerts" aria-pressed="false">Alerts &amp; sounds</button><button type="button" data-workspace="health" aria-pressed="false">Connection health</button></nav>
+    <nav id="workspace-nav" aria-label="Race tools"><button type="button" data-workspace="live" aria-pressed="true">Live race</button><button type="button" data-workspace="history" aria-pressed="false">History &amp; racers</button><button type="button" data-workspace="profiles" aria-pressed="false">Profiles</button><button type="button" data-workspace="alerts" aria-pressed="false">Alerts &amp; sounds</button><button type="button" data-workspace="display" aria-pressed="false">Display &amp; hotkeys</button><button type="button" data-workspace="health" aria-pressed="false">Connection health</button></nav>
     <p id="feature-notice" class="note" role="status" hidden></p>
     <section id="workspace-panel" aria-label="Race tools" hidden></section>
     <section id="race-events" aria-labelledby="events-heading">
       <div class="heading"><h2 id="events-heading">Race events</h2><span id="events-status" class="muted">Waiting for a race</span></div>
+      <div class="runner-context-controls"><label>Your declared status<select id="runner-context"><option value="playing">Playing</option><option value="waiting">Waiting on an item</option><option value="break">Taking a break</option><option value="gomode">Go mode</option></select></label><label>Waiting for (shared, optional)<input id="context-detail" maxlength="100" disabled placeholder="e.g. Hammer"></label><button id="context-save" type="button" disabled>Share status</button></div><p id="context-feedback" class="note" role="status">Statuses are shared within the same room, team and timer session. They do not pause the clock or reset BK.</p><p id="shared-contexts" class="note"></p>
       <div id="bk-alert" hidden><span>BK Timer · Your runner</span><strong id="bk-clock">00:05:00</strong><span id="bk-detail" class="muted">Since your last recorded check</span></div>
       <ol id="event-list"><li class="muted">Run milestones will appear here.</li></ol>
       <p class="note">Check milestones use recorded events. Halfway milestones require a known check total shared by that player's timer app.</p>
@@ -39,6 +41,7 @@
       <form id="connect-form">
         <div class="fields">
           <label>Server address<input id="address" required maxlength="2048" placeholder="archipelago.gg:12345" autocomplete="off" spellcheck="false"></label>
+          <label>Room or tracker URL (optional)<input id="trackerUrl" type="url" maxlength="2048" placeholder="https://archipelago.gg/room/…" autocomplete="off" spellcheck="false"></label>
           <label>Your original slot name<input id="name" required maxlength="128" placeholder="Player1" autocomplete="off" spellcheck="false"></label>
           <label>Room password (optional)<input id="password" type="password" maxlength="1024" autocomplete="off"></label>
           <label>Shared session name<input id="session" required maxlength="48" value="main" pattern="[A-Za-z0-9_ \-]+" spellcheck="false"></label>
@@ -81,7 +84,9 @@
   <dialog id="awards-dialog" aria-labelledby="awards-heading"><div class="heading"><h2 id="awards-heading">Race highlights</h2><button type="button" data-close="awards-dialog">Close</button></div><p class="note">Descriptive statistics, not a skill ranking across different games. Released runners remain in results but are excluded from completion awards.</p><div id="awards-content"></div><button id="awards-share" type="button">Include in result preview</button></dialog>
   <script src="timer-alerts.js"></script>
   <script src="race-features.js"></script>
+  <script src="compact-stats.js"></script>
   <script src="run-timer-renderer.js"></script>
+  <script src="review-controls.js"></script>
   <script src="feature-controls.js"></script>
 </body>
 </html>

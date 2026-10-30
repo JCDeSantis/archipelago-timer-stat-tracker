@@ -1,6 +1,6 @@
 {
   "name": "archipelago-timer-stat-tracker",
-  "version": "0.2.1",
+  "version": "0.5.0",
   "description": "Shared Archipelago run timers, individual and group completion statistics, and a solo stopwatch.",
   "main": "src/main.js",
   "author": "JC_DeSantis",
@@ -16,8 +16,8 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
-    "electron": "^44.4.3",
-    "electron-builder": "^26.15.3"
+    "electron": "44.10.0",
+    "electron-builder": "26.18.0"
   },
   "build": {
     "appId": "com.jcdesantis.archipelago-timer-stat-tracker",
@@ -28,12 +28,19 @@
     "compression": "normal",
     "files": [
       "src/main.js",
+      "src/global-hotkeys.js",
+      "src/compact-stats.js",
+      "src/race-review.js",
+      "src/review-controls.js",
       "src/settings.js",
+      "src/room-progress.js",
+      "src/progress-sync.js",
       "src/run-timer.js",
       "src/run-timer-preload.js",
       "src/run-timer-renderer.js",
       "src/timer-alerts.js",
       "src/race-results.js",
+      "src/race-notifications.js",
       "src/race-features.js",
       "src/race-library.js",
       "src/sound-library.js",

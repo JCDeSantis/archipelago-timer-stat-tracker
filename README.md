@@ -40,7 +40,7 @@ installer, ZIP, and SHA-256 checksums are included in the download artifact.
 
 To publish downloads, update `package.json` and `package-lock.json` together, then
 create and publish a GitHub release tagged `v` followed by that version (for
-example, `v0.1.11`). Mark releases as **pre-release** while the project is a work
+example, `v0.5.0`). Mark releases as **pre-release** while the project is a work
 in progress. The workflow rejects a release tag that differs from the package
 version and attaches the verified builds to that release after all checks pass.
 Publishing a release is a separate maintainer action; ordinary builds only
@@ -60,7 +60,7 @@ be enabled in Forgejo. The workflow does not publish or push to GitHub.
 - `scripts/`: packaged-build verification and release download preparation.
 - `.github/workflows/`: Windows build and release automation.
 - `.forgejo/workflows/`: Windows builds for the private Forgejo copy.
-- `docs/`: [feature ideas](docs/FEATURE_IDEAS.md).
+- `docs/`: [current race tools and usage guide](docs/RACE_TOOLS.md).
 
 The Windows downloads contain only the app, its runtime dependency, the runtime
 icon, and license information. Tests, development dependencies, documentation,
@@ -71,9 +71,13 @@ a release asset; cloning this source repository is only needed for development.
 ## Shared runs
 
 The main timer remains first and prominent in every view. **Live race**, **History
-& racers**, **Profiles**, **Alerts & sounds**, and **Connection health** sit beneath
-it. See the [race tools guide](docs/RACE_TOOLS.md) for history, called-off runs,
-username links, finish cards, profiles, sound cues, previews and awards.
+& racers**, **Profiles**, **Alerts & sounds**, **Display & hotkeys**, and
+**Connection health** sit beneath it. See the [race tools guide](docs/RACE_TOOLS.md)
+for history, called-off runs, username links, finish cards, profiles, sound cues,
+previews and awards. Version 0.5.0 adds opt-in global hotkeys, configurable compact
+columns/filtering/sorting/pins, race review timelines, same-seed comparisons and
+explanations when synchronization recovers missing counts. Review and comparisons
+open inside historical run details; older records may lack individual check times.
 
 The shared clock is the main view. **Timer only** opens a frameless, resizable
 window with no header. The clock, brief event alerts and personal BK timer scale

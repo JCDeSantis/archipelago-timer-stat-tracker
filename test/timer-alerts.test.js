@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { TimerAlerts } = require('../src/timer-alerts');
+const { TimerAlerts, alertTimestamp } = require('../src/timer-alerts');
 
 function harness() {
   const alerts = new TimerAlerts();
@@ -8,6 +8,38 @@ function harness() {
   return patch => alerts.update(Object.assign(state, patch));
 }
 const event = (id, type = 'goal', at = 100000) => ({ id, type, at, message: `${id} happened.` });
+
+test('queued alerts retain their event race time instead of the later display time', () => {
+  const update = harness(); update({});
+  const events = [event('checks:1:1', 'first', 90000), event('goal:2', 'goal', 95000)];
+  assert.equal(update({ events }).id, 'goal:2');
+  update({ now: 8000, serverNow: 108000 });
+  const delayed = update({ now: 8600, serverNow: 108600 });
+  assert.equal(delayed.id, 'checks:1:1'); assert.equal(delayed.at, 90000);
+  assert.equal(alertTimestamp(delayed.at, 0), '00:01:30');
+  assert.equal(alertTimestamp(delayed.at, 0), alertTimestamp(update({ now: 9000, serverNow: 109000 }).at, 0));
+  assert.equal(alertTimestamp(null, 0), 'Time unavailable');
+  assert.equal(alertTimestamp(90000, 100000), 'Pre-race');
+  assert.equal(alertTimestamp(90000, undefined), 'Pre-race');
+  assert.equal(alertTimestamp(360000000, 0), '100:00:00');
+});
+
+test('recovery coalesces simultaneous first-check alerts, while muted recovery leaves first-check enabled', () => {
+  const update = harness(); update({});
+  const events = [{ ...event('checks:1:1', 'first'), slot: 1 }, { ...event('recovery:1:100000', 'recovery'), slot: 1 }];
+  assert.equal(update({ events }).type, 'recovery');
+  assert.equal(update({ now: 8000 }), null);
+  assert.equal(update({ now: 8600 }), null, 'no redundant first-check popup follows recovery');
+  const muted = harness(); muted({});
+  assert.equal(muted({ events, allowed: e => e.type !== 'recovery' }).type, 'first');
+});
+
+test('deferred check alerts observed at reconnect stay historical', () => {
+  const update = harness();
+  const events = [{ ...event('checks:1:1', 'first'), notBefore: 101500 }];
+  assert.equal(update({ events }), null);
+  assert.equal(update({ events, serverNow: 102000 }), null);
+});
 
 test('compact alerts suppress history, deduplicate updates, and expire after eight seconds', () => {
   const update = harness();

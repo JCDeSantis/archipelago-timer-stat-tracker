@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { RunTimer } = require('./run-timer');
+const { GlobalHotkeys, definitions } = require('./global-hotkeys');
 const { Settings } = require('./settings');
 const { FeatureService } = require('./feature-service');
 
@@ -25,14 +26,22 @@ let fullViewBounds = null;
 let focusedStatsHeight = 0;
 const settings = new Settings(app.getPath('userData'));
 let features;
+let hotkeys, hotkeyError = '';
+function sendHotkey(action) {
+  try {
+    if (['playing','waiting','break','gomode'].includes(action)) timer.setContext({state:action,detail:action==='waiting'?timer.contexts[timer.slot]?.detail || '':''});
+    else if(action==='mute') features.soundsMuted = !features.soundsMuted;
+    if(window && !window.isDestroyed()) { window.webContents.send('run-timer-state',appState()); window.webContents.send('run-timer-hotkey',{action}); }
+  } catch(error) { window?.webContents.send('run-timer-hotkey',{action,error:error.message}); }
+}
 const timer = new RunTimer({ solo: settings.value.solo, saveSolo: solo => settings.save({ solo }), followRoomCountdown: settings.value.followRoomCountdown !== false,
-  resolveRoster: players => features?.resolveRoster(players) });
+  notificationPreferences: () => features?.preferences(), resolveRoster: players => features?.resolveRoster(players) });
 features = new FeatureService({ directory: app.getPath('userData'), settings, timer, getWindow: () => window, backgroundTest: BACKGROUND_TEST });
-const appState = () => ({ ...features.decorate(timer.snapshot()), alwaysOnTop: window?.isAlwaysOnTop() ?? settings.value.alwaysOnTop === true });
+const appState = () => ({ hotkeys: hotkeys?.preferences, hotkeyError, ...features.decorate(timer.snapshot()), alwaysOnTop: window?.isAlwaysOnTop() ?? settings.value.alwaysOnTop === true });
 timer.on('change', state => {
   features.observe(state);
   if (state.connection === 'connected' && settings.value.connection?.address !== state.address) {
-    settings.save({ connection: { address: state.address, name: timer.options.name, session: state.session } });
+    settings.save({ connection: { address: state.address, name: timer.options.name, session: state.session, trackerUrl: timer.options.trackerUrl || '' } });
   }
   if (window && !window.isDestroyed()) window.webContents.send('run-timer-state', appState());
 });
@@ -58,13 +67,29 @@ ipcMain.handle('run-timer-action', async (event, action, input) => {
   if (!window || event.sender !== window.webContents) throw new Error('Timer access denied.');
   try {
     if (action === 'state') return { state: appState(), preferences: settings.value.connection || {} };
+    if (action === 'hotkey-settings') {
+      try { hotkeys.apply(input); hotkeyError=''; settings.save({hotkeys:hotkeys.preferences}); }
+      catch(error) { hotkeyError=error.message; throw error; }
+      return {state:appState()};
+    }
+    if (action === 'sound-toggle-mute') { sendHotkey('mute'); return {state:appState()}; }
+    if (action === 'hotkey-test' && BACKGROUND_TEST) {
+      if(!hotkeys.preferences.enabled || !Object.hasOwn(definitions,input?.action || '')) throw new Error('Enable a valid hotkey first.');
+      sendHotkey(input.action);return {state:appState()};
+    }
     if (features.handles(action)) return { ...await features.handle(action, input), state: appState() };
     if (action === 'connect') {
       features.beforeConnect(input);
       timer.connect(input);
-      settings.save({ connection: { address: timer.options.address, name: timer.options.name, session: timer.options.session } });
+      settings.save({ connection: { address: timer.options.address, name: timer.options.name, session: timer.options.session, trackerUrl: timer.options.trackerUrl || '' } });
     } else if (action === 'disconnect') timer.disconnect();
     else if (action === 'start') timer.start(input?.slots, input?.countdown, input?.requireReady ?? false);
+    else if (action === 'tracker-source') {
+      timer.setTrackerSource(input?.url);
+      settings.save({ connection: { ...settings.value.connection, trackerUrl: timer.options.trackerUrl } });
+    }
+    else if (action === 'sync-progress') timer.syncProgress();
+    else if (action === 'runner-context') timer.setContext(input);
     else if (action === 'ready') timer.ready(input?.slots, input?.ready);
     else if (action === 'selection') { timer.select(input); features.rosterIssues = []; features.activeRoster = null; }
     else if (action === 'follow-countdown') {
@@ -125,7 +150,7 @@ ipcMain.handle('run-timer-action', async (event, action, input) => {
           releasedPlayers: state.players.filter(p => p.released && !p.completed).length,
           finishedPlayers: state.players.filter(p => p.stopped).length,
           stats: state.stats,
-          events: state.events,
+          events: state.events, reviewChecks:state.reviewChecks,
           players: state.players.map(p => ({ ...p, elapsedMs: p.finishedAt === null || !state.run ? null : Math.max(0, p.finishedAt - state.run.startedAt) })),
           solo: state.solo,
           timing: 'Real elapsed time. Archipelago finishes use live notification receipt. Null times are unknown, not zero.',
@@ -187,9 +212,14 @@ else {
   app.on('second-instance', () => {
     if (window && !BACKGROUND_TEST) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
   });
-  app.whenReady().then(() => { createWindow(); if (SELFTEST) selfTest(); });
+  app.whenReady().then(() => {
+    hotkeys = new GlobalHotkeys(BACKGROUND_TEST ? {register:()=>true,unregister:()=>{}} : globalShortcut,sendHotkey);
+    try { hotkeys.apply(settings.value.hotkeys); } catch(error) { hotkeyError=error.message; }
+    createWindow(); if (SELFTEST) selfTest();
+  });
 }
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => hotkeys?.release());
 app.on('before-quit', () => { timer.disconnect(); settings.flush(); features.close(); });
 
 module.exports = { createWindow };

@@ -27,6 +27,18 @@ function library(t) {
   t.after(() => { lib.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   return { lib, dir, advance: ms => { now += ms; } };
 }
+
+test('review history retains check timestamps and declared state metadata across updates and export', t => {
+  const {lib}=library(t),s=sample();
+  s.reviewChecks=[{slot:1,location:10,at:s.run.startedAt+500}];
+  s.events=[{id:'go',slot:1,type:'context',state:'gomode',at:s.run.startedAt+900,message:'Go mode'}];
+  lib.observe(s);
+  lib.observe({...s,events:[],reviewChecks:[]});
+  const r=lib.get(recordId(s));
+  assert.equal(r.reviewChecks.length,1);assert.equal(r.events[0].state,'gomode');assert.equal(r.events[0].slot,1);
+  assert.equal(lib.exportRecord(r.id).record.reviewChecks[0].at,s.run.startedAt+500);
+  assert.equal(r.observedThrough,s.serverNow);
+});
 test('history persists updates without duplicate runs or connection secrets', t => {
   const { lib, dir } = library(t), s = sample();
   lib.observe({ ...s, password: 'DO-NOT-SAVE' });

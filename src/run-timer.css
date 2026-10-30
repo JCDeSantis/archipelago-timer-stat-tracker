@@ -98,6 +98,12 @@ body.timer-only #group-clock { font-size: min(var(--clock-width, 18.75vw), 62cqh
 body.timer-only .timer-toolbar { position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); margin: 0; padding: 4px; flex-wrap: nowrap; gap: 4px; background: #1b1d21ed; border: 1px solid #44474f; border-radius: 8px; box-shadow: 0 4px 18px #0006; opacity: 0; pointer-events: none; transition: opacity .15s ease; z-index: 20; app-region: no-drag; }
 body.timer-only #timer-stage:hover .timer-toolbar, body.timer-only #timer-stage:has(:focus-visible) .timer-toolbar { opacity: 1; pointer-events: auto; }
 body.timer-only .timer-toolbar button { padding: 5px 10px; font-size: 11px; }
+.quick-status { display: none; }
+body.timer-only .quick-status { display: block; }
+body.timer-only .timer-toolbar:has(#quick-status-toggle[aria-expanded="true"]) { opacity: 1; pointer-events: auto; }
+#quick-status-options { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); width: 232px; padding: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: #1b1d21; border: 1px solid #44474f; border-radius: 8px; box-shadow: 0 4px 18px #0006; }
+#quick-status-options button[aria-pressed="true"] { color: #7bce9f; border-color: #7bce9f; }
+#quick-status-feedback { grid-column: 1 / -1; font-size: 11px; color: #f0c686; }
 body.timer-only #share-status { display: none; }
 .timer-popup { display: none; }
 body.timer-only .timer-popup { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; width: 100%; min-height: calc(var(--popup-font) * 2.6); max-height: calc(var(--popup-font) * 2.6); padding: 0 8px; margin-top: clamp(4px, 2cqh, 24px); font-size: var(--popup-font); line-height: 1.3; color: #f0c686; opacity: 0; transform: translateY(4px); transition: opacity .3s ease, transform .3s ease; flex-shrink: 0; overflow-wrap: anywhere; }
@@ -113,13 +119,38 @@ body.timer-only.has-bk #group-clock { font-size: min(var(--clock-width, 18.75vw)
 #focused-stats { flex: none; padding: 7px 12px 8px; border-top: 1px solid var(--border); background: #181a1d; }
 #focused-stats-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; }
 #focused-stats table { table-layout: fixed; border-collapse: separate; border-spacing: 0; }
-#focused-stats th { position: sticky; top: 0; background: #181a1d; height: 36px; padding: 8px; line-height: 19px; }
-#focused-stats td { height: 32px; padding: 6px 8px; line-height: 19px; font-size: 12px; }
+#focused-stats th { position: sticky; top: 0; background: #181a1d; height: 36px; padding: 5px 4px; line-height: 12px; font-size: 10px; }
+#focused-stats td { height: 32px; padding: 3px 4px; line-height: 13px; font-size: 12px; }
 #focused-stats td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#focused-stats th:first-child { width: 44%; }
+#focused-stats th:first-child { width: 40%; }
+#focused-stats th:nth-child(2) { width: 22%; }
+#focused-stats th:nth-child(3) { width: 14%; }
+#focused-stats th:last-child { width: 24%; }
+#focused-stats .runner-game { display: block; font-size: 10px; line-height: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#focused-stats .runner-name-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+#focused-stats .runner-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#focused-stats .runner-status { flex: 0 1 auto; max-width: 60%; min-width: 0; font-size: 9px; line-height: 12px; padding: 0 3px; border-radius: 3px; background: #2a3036; color: #b9c6d2; overflow: hidden; text-overflow: ellipsis; }
+#focused-stats .runner-status[data-state="waiting"] { color: #f0c686; }
+#focused-stats .runner-status:is([data-state="gomode"], [data-state="finished"]) { color: #7bce9f; }
+#focused-stats td:nth-child(3) { text-align: center; }
 #focused-stats td:nth-child(2), #focused-stats th:nth-child(2) { text-align: right; }
+#focused-stats td:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #focused-stats td:last-child { font-family: Consolas, monospace; }
 .clock-card { position: relative; }
+#hotkey-feedback { position: absolute; top: 6px; left: 8px; z-index: 22; max-width: 65%; padding: 3px 5px; border-radius: 4px; background: #1b1d21ed; font-size: 11px; color: #f0c686; }
+.review-tools { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px; }
+.review-events { max-height: 260px; overflow-y: auto; margin: 10px 0; padding-left: 24px; }
+.review-events li { padding: 4px; overflow-wrap: anywhere; }
+.review-events time { font-family: Consolas, monospace; color: var(--muted); margin-right: 8px; }
+.review-events li[data-kind="gap"], .review-events li[data-kind="sync"] { color: #f0c686; }
+.review-events li[data-kind="goal"], .review-events li[data-kind="release"] { color: #7bce9f; }
+.review-track { display: flex; height: 14px; background: #101113; border: 1px solid var(--border); position: relative; margin: 8px 0; }
+.review-mark { position: absolute; top: 0; height: 100%; min-width: 2px; background: #7bce9f; }
+.review-mark.gap { background: #b77b32; opacity: .7; }
+#review-slider { width: 100%; }
+.comparison-table td { white-space: nowrap; }
+.comparison-table td:first-child { white-space: normal; }
+#focused-stats td:last-child:not(:nth-child(4)) { font-family: inherit; }
 #health-indicator { position: absolute; top: 10px; right: 10px; padding: 3px 7px; font-size: 10px; background: #141517; color: var(--muted); }
 #health-indicator.healthy { color: #7bce9f; }
 #health-indicator.health-warning { color: #f0c686; }
@@ -156,3 +187,7 @@ dialog .inline-check { white-space: normal; }
 body.full-alerts:not(.timer-only) .timer-popup { display: block; font-size: 13px; color: #f0c686; min-height: 36px; margin-top: 12px; max-width: 100%; opacity: 0; }
 body.full-alerts:not(.timer-only) .timer-popup.visible { opacity: 1; }
 body.full-alerts:not(.timer-only) .timer-popup[data-tone="success"] { color: #7bce9f; }
+
+.runner-context-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 12px 0; }
+.runner-context-controls label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+#event-list li[data-event="recovery"], #event-list li[data-event="context"] { color: #7bce9f; }

@@ -15,6 +15,17 @@ function recordId(state) {
   if (!state?.run || !Number.isFinite(state.run.startedAt)) return null;
   return createHash('sha256').update(JSON.stringify([state.seed, state.team, state.session, state.run.startedAt])).digest('hex');
 }
+function reviewChecks(state, players) {
+  if(!Array.isArray(state.reviewChecks)) return undefined;
+  const slots=new Map(players.map(p=>[p.slot,p])), checks=new Map();
+  for(const c of state.reviewChecks.slice(0,100000)) {
+    const p=slots.get(c?.slot);
+    if(!p || !Number.isSafeInteger(c.location) || c.location<0 || !Number.isFinite(c.at) || c.at<state.run.startedAt || p.finishedAt!==null && c.at>p.finishedAt) continue;
+    const key=`${c.slot}:${c.location}`;
+    if(!checks.has(key) || checks.get(key).at>c.at) checks.set(key,{slot:c.slot,location:c.location,at:c.at});
+  }
+  return [...checks.values()];
+}
 function cleanSnapshot(state) {
   if (!state?.run || !Number.isFinite(state.run.startedAt) || state.run.startedAt <= 0 || typeof state.seed !== 'string' || !Number.isInteger(state.team) ||
     !Array.isArray(state.players) || !state.players.length || state.players.length > 1000 || new Set(state.players.map(p => p.slot)).size !== state.players.length) throw new Error('Invalid race record.');
@@ -22,6 +33,8 @@ function cleanSnapshot(state) {
     if (!Number.isInteger(p.slot) || p.slot < 1) throw new Error('Invalid runner slot.');
     const stats = p.stats || {};
     return { slot: p.slot, name: text(p.name, 256, 'runner name'), originalName: text(p.originalName || p.name, 256, 'original slot name'),
+      checkProgress: p.checkProgress && Number.isSafeInteger(p.checkProgress.checked) && Number.isSafeInteger(p.checkProgress.total) && p.checkProgress.checked >= 0 && p.checkProgress.checked <= p.checkProgress.total ? {checked:p.checkProgress.checked,total:p.checkProgress.total} : null,
+      hintsUsed: Number.isSafeInteger(p.hintsUsed) && p.hintsUsed >= 0 ? p.hintsUsed : null,
       game: text(p.game || 'Unknown game', 256, 'game'), completed: p.completed === true, released: p.released === true,
       stopped: p.completed === true || p.released === true, finishedAt: finiteTime(p.finishedAt), releasedAt: finiteTime(p.releasedAt),
       stats: { checksCompleted: Number.isSafeInteger(stats.checksCompleted) && stats.checksCompleted >= 0 ? stats.checksCompleted : null,
@@ -30,10 +43,12 @@ function cleanSnapshot(state) {
   const allFinished = state.allFinished === true && players.every(p => p.stopped);
   return { schema: 1, seed: state.seed.slice(0, 512), team: state.team, session: text(state.session || 'main', 48, 'session'),
     run: { startedAt: state.run.startedAt, scheduledAt: finiteTime(state.run.scheduledAt), source: state.run.source || 'app', countdownSeconds: finiteTime(state.run.countdownSeconds) },
+    observedThrough: finiteTime(state.serverNow ?? state.observedThrough),
+    reviewChecks: reviewChecks(state,players),
     players, allFinished, groupFinishedAt: allFinished ? finiteTime(state.groupFinishedAt) : null,
     stats: { checksCompleted: Number.isSafeInteger(state.stats?.checksCompleted) && state.stats.checksCompleted >= 0 ? state.stats.checksCompleted : null,
       elapsedMs: allFinished ? finiteTime(state.stats?.elapsedMs) : null, longestBKMs: allFinished ? finiteTime(state.stats?.longestBKMs) : null },
-    events: Array.isArray(state.events) ? state.events.slice(-5000).filter(e => typeof e.id === 'string' && typeof e.message === 'string').map(e => ({ id: e.id.slice(0, 160), type: String(e.type).slice(0, 32), at: finiteTime(e.at), message: e.message.slice(0, 2048) })) : [] };
+    events: Array.isArray(state.events) ? state.events.slice(-5000).filter(e => e && typeof e.id === 'string' && typeof e.message === 'string').map(e => ({ id: e.id.slice(0, 160), type: String(e.type).slice(0, 32), at: finiteTime(e.at), slot: Number.isInteger(e.slot) ? e.slot : null, state: ['playing','waiting','break','gomode'].includes(e.state) ? e.state : undefined, message: e.message.slice(0, 2048) })) : [] };
 }
 
 class RaceLibrary {
@@ -85,6 +100,10 @@ class RaceLibrary {
     const data = cleanSnapshot(state);
     Object.assign(data, { title: old?.title || state.session, gaps: old?.gaps || [], lateJoin: old?.lateJoin ?? state.serverNow > state.run.startedAt,
       importedLegacy: old?.importedLegacy || false, lastSeenAt: now });
+    if(old) {
+      data.events = [...new Map([...(old.events || []), ...data.events].map(e=>[e.id,e])).values()].slice(-5000);
+      if(Array.isArray(data.reviewChecks) || Array.isArray(old.reviewChecks)) data.reviewChecks = [...new Map([...(old.reviewChecks || []), ...(data.reviewChecks || [])].map(c=>[`${c.slot}:${c.location}`,c])).values()].slice(0,100000);
+    }
     data.resumeConnection = state.resumeConnection || old?.resumeConnection || null;
     for (const p of data.players) p.originalName = old?.players.find(q => q.slot === p.slot)?.originalName || p.originalName;
     if (old && !this.seen.has(id) && !old.allFinished && !data.gaps.some(g => g.to === null) && now > old.lastSeenAt + 2000) data.gaps.push({ from: old.lastSeenAt, to: now, kind: 'app-closed' });

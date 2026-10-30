@@ -5,6 +5,131 @@ it; Timer Only retains its compact clock, notifications and runner statistics.
 Nothing in these tools automatically connects, starts a game, posts chat or
 changes Archipelago gameplay status.
 
+## Version 0.5.0: hotkeys, review and display options
+
+**Display & hotkeys** contains the new local preferences. Global hotkeys are
+disabled until explicitly enabled and saved. Defaults use Ctrl+Alt+Shift plus
+P (Playing), W (Waiting), B (Break), G (Go mode), S (toggle statistics),
+T (toggle Timer Only), or M (temporarily mute/unmute sounds). Each binding can
+be changed or left blank. A shortcut already owned by another app is rejected;
+the app attempts to restore the previous working bindings. Shortcuts do not
+focus the timer, start or stop the race, or submit results. Status shortcuts
+require a connected, unfinished runner. View shortcuts wait until dialogs are
+closed. Temporary sound mute resets on app restart and retains saved sound
+preferences. Hidden automated tests simulate registration instead of claiming
+system shortcuts while a game is running.
+
+Compact layout preferences can hide game, declared status, world checks, Hints
+Used or Longest BK; names always remain visible. Filter to all racers,
+unfinished racers or yourself, sort by roster/name/world completion percentage,
+and pin usernames in your preferred order. Pinning applies within the filter.
+These settings persist locally. Show Stats sizes to the filtered list and keeps
+scrolling inside that list after six rows; an empty filter shows a clear message.
+
+Open **History & racers**, select a run, then scroll to **Race review timeline**.
+The slider and previous/next event controls explore recorded checks, declared
+statuses, finishes, count recoveries and recording gaps. Filter by racer or
+event kind. Green marks indicate recorded checks and amber bands mark known
+recording gaps. The list shows the latest 100 matching events at the slider
+position. Refresh recording to update an active run's review. Review is silent
+and does not replay notifications or alter the live timer.
+
+Individual check timestamps and structured Go-mode declarations are retained
+from this version forward, including in history exports/imports. Older records
+can still be opened but missing detail remains unavailable. Unknown timestamps
+from recovered counters never become check marks or new BK boundaries. History
+retains up to 100,000 check timestamps and 5,000 events per race; chart marks are
+sampled for large runs. Recording quality warnings remain visible.
+
+Below the timeline, **Same-seed comparisons** offers other non-excluded attempts
+from the same seed and team. Matching runners require the same slot, original
+username and game. Choose completion time, first recorded check, first recorded
+Go-mode declaration, recorded check count or Longest BK. Negative differences
+mean this attempt's value is lower. Unknown values stay unavailable; check/BK
+differences are withheld when either recording has uncertain coverage. Group
+time differences require matching rosters and completed runners in both attempts;
+release is not treated as completion. Different seeds are never compared.
+
+Count refreshes now explain additions beyond the previously known baseline in
+the Race events log and Connection health, including the source and racer/count.
+An initial snapshot stays quiet, live-observed checks are not reported again as
+recoveries, and unchanged polling does not repeat the explanation. The optional
+**Recovered check counts** alert category defaults to no popup and no sound.
+The explanation's timestamp is the recovery time, not an invented check time.
+
+In Timer Only, hover over the timer (or use Tab) and choose **Status** to quickly
+share Playing, Waiting, Taking a break or Go mode. The choices overlay the timer;
+they do not resize the window or move the clock and notifications. Escape closes
+the choices first, and clicking outside also dismisses them. Waiting uses your
+existing waiting detail if present; edit that optional detail in the full view.
+Status changes use the same shared room/team/session data as the full-view
+controls and never pause the clock or reset BK. They require a connected,
+unfinished runner.
+
+Compact Show Stats displays a small status badge beside each runner name, with
+the game on the line below. Waiting details are available in the badge tooltip.
+Completed and Released replace declared statuses once that runner stops. Runners
+who have not declared a status have no badge.
+
+## Compact statistics and progress synchronization (0.4.1)
+
+Timer Only → Show Stats lists runner name, game, world checks completed / total,
+Hints Used, and Longest BK. The game is shown as a second line under the name so
+the panel still fits six runners before its own list starts scrolling. Long game
+names truncate visually and remain available in the tooltip.
+
+The denominator comes from that slot's actual server-reported checked and missing
+locations, not a generic number of locations supported by the game. World totals
+include checks before this timed race and checks created by release/collect.
+The full run statistics and shared race results continue to count recorded timed
+checks separately. If a world total is unavailable, the compact row shows
+recorded race checks followed by ` / ?`, with an explanatory tooltip.
+
+Hints Used counts purchased hints across the room session, calculated from the
+server's matching checked count, points earned per check, hint price and remaining
+hint-point balance. It does not count entries in the visible hint list: those can
+include starting hints, hints for other players, repeated announcements, or hints
+supplied without a purchase. Zero-cost hints and missing/inconsistent pricing data
+show `—` rather than an invented zero. These fields are also retained in saved
+race records; older records keep unknown values.
+
+Each connected timer receives live RoomUpdate data and republishes its own world
+progress to the room's shared timer storage. Every minute, it reauthenticates the
+same observer slot on the existing socket to obtain a complete server snapshot,
+then reconciles shared observer records. This does not reset the race, readiness,
+declared status, check timestamps, or finish times. A normal reconnect also gets
+a complete snapshot. **Connection health → Sync progress now** requests the same
+refresh manually and shows the latest own-world refresh time.
+
+All-player check counts can now be recovered through this app's existing
+connection, without other racers installing the timer. By default, it requests
+the informational `!status` command on connection and at most once per minute.
+Only the server's response for the connected team is accepted; player names must
+match uniquely. The command does not change gameplay or post race results.
+
+For compatible WebHost servers, optionally enter the correct room or tracker URL
+in the connection form, or open **Connection health**, enter the URL and select
+**Use this source**. The app discovers the tracker from a room URL and reads its
+all-player checked locations, totals and games. Dynamic API data is cached for
+60 seconds and static data for five minutes. Counts may therefore lag behind
+live events. Roster/game/own-world checks reject mismatched data, but always use
+the URL belonging to the connected room. API failures fall back to `!status`.
+Connection health shows the source and last successful refresh.
+
+Hints Used remains best-effort: other runners' hint purchases are available when
+their updated timer shares them. Neither the tracker API nor `!status` provides
+an exact purchase counter. Missing values stay unknown. The app does not sign
+into other players' slots or infer totals from a game-wide item database.
+Last known counts remain visible offline; refreshes stop while the app is closed.
+Applying a profile or history setup clears an unspecified tracker URL; enter the
+matching URL for that room if desired.
+
+Unknown timestamps from missed checks remain unknown: a corrected world counter
+cannot reconstruct BK history or a missed finish time. API and status counts do
+not create check timestamps or mark racers as finished.
+The server's normal Sync command only resends received items, so it is not used
+as a world-check snapshot request.
+
 ## History and called-off runs
 
 History is saved locally whenever the app observes a shared race. Check counts,
@@ -59,6 +184,58 @@ to the original race names; local display names are an explicit preview choice.
 
 ## Alert preferences and countdown sounds
 
+### New in 0.3.0: event notifications and shared runner context
+
+The Race events area includes **Your declared status**: Playing, Waiting on an
+item, Taking a break, or Go mode. Waiting can include a short optional description.
+Press **Share status** to send it through Archipelago storage to other copies of
+the app using the same room, team and timer session. Each copy changes only its
+connected runner through this UI. Status survives reconnecting to that session;
+use a new session for a new race. This is a declaration, not automatic game logic
+or online-presence detection. A room's other clients can read its shared storage.
+
+Shared labels appear under Race events. Your compact BK label also shows your
+declared state while the BK clock is visible. Neither selecting a state nor
+receiving progression resets the BK clock, stops timing, or changes completion
+and release status. Two copies connected to the same slot share that slot's
+latest declaration. Older app versions continue timing but do not show these
+new declarations.
+
+Additional configurable alerts cover first checks, long-gap recovery, resumed
+group activity, watched items, progression received while Waiting, relevant new
+hints, watched hints found, hint affordability, declared status changes, and item
+burst digests. Completion messages also report completed/released/active counts.
+They use the existing eight-second popup area and independent sound/popup toggles.
+Finish/release events keep priority over routine new notifications.
+
+Popups prefix the message with its original race elapsed time, for example
+`[00:02:14] Link completed their first recorded race check.` Queued alerts retain
+that timestamp while waiting and during display. Item digests use the first item
+in the burst; BK reminders use the time the reminder was generated. Before a
+shared start is available, the label reads `Pre-race`.
+
+For watched-item and watched-hint notifications, enter exact item names (one per
+line) in **Alerts & sounds**. This small list only configures alerts. Item names
+are hidden by default; **Reveal watched item names in alerts** enables them.
+The app reads the room's game-specific data package to resolve item names.
+Events need a connected observer: old hint lists and restored check histories
+do not replay as fresh notifications. Affordability alerts require known points,
+cost and location total, and occur on a transition to being able to buy a hint.
+The app never buys a hint automatically.
+
+Three or more received item messages within a short collection window become a
+single digest with the number of watched items. A watched hint found and its
+matching item are deduplicated. First-check/recovery messages for the same check
+are combined for popups, with the separate events retained in the log. Recently
+observed release activity suppresses nearby recovery claims where possible;
+server-generated collection checks cannot always be distinguished from play.
+
+Five additional original synthesized retro presets are built in: Countdown
+pulse, Item discovery, Secret chime, Heart pickup and Victory fanfare. They use
+short square-wave notes inspired by classic adventure games, with no extracted
+game audio. New installations use retro sound selections; saved selections and
+the audio-off default are preserved. All presets can also be selected per event.
+
 **Alerts & sounds** separates popup and sound switches for runner completion,
 release, group finish, check milestones, halfway, other-runner BK, ready
 confirmations and race start. Scope runner events to everyone, others or your
@@ -72,8 +249,8 @@ remains independent. Other-runner BK reminders repeat at most once per ten minut
 
 Countdown audio is off by default. Enable **Enable countdown sounds**, set the
 volume, and optionally allow audio when another app has focus. Choose separate
-sounds for the 3–2–1 ticks, GO, and each alert category. Four built-in choices are
-available: Classic beep, Soft chime, Arcade, and Bell. Preview buttons audition
+sounds for the 3–2–1 ticks, GO, and each alert category. Classic beep, Soft chime,
+Arcade and Bell are available alongside the five retro presets. Preview buttons audition
 the selected sound even if that event is disabled. **Preview 3–2–1 + GO** auditions
 the whole countdown. Save preferences to keep your choices.
 Mute all sounds stops current previews and disables countdown and event audio.

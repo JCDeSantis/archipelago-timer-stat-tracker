@@ -29,7 +29,7 @@ async function room(t) {
   };
   server.on('connection', ws => {
     ws.keys = new Set();
-    send(ws, { cmd: 'RoomInfo', seed_name: 'test-seed', time: fixture.time / 1000 });
+    send(ws, { cmd: 'RoomInfo', seed_name: 'test-seed', time: fixture.time / 1000, ...(fixture.roomOptions || {}) });
     ws.on('message', data => {
       for (const packet of JSON.parse(data)) {
         fixture.packets.push(packet);
@@ -37,7 +37,8 @@ async function room(t) {
           if (packet.name === 'bad') { send(ws, { cmd: 'ConnectionRefused', errors: ['InvalidSlot'] }); continue; }
           ws.slot = Number(packet.name.replace('Player', ''));
           send(ws, { cmd: 'Connected', team: 0, slot: ws.slot, players, slot_info, ...fixture.locationInfo[ws.slot] });
-        } else if (packet.cmd === 'SetNotify') packet.keys.forEach(key => ws.keys.add(key));
+        } else if (packet.cmd === 'GetDataPackage') send(ws, { cmd:'DataPackage', data:{games:{}} });
+        else if (packet.cmd === 'SetNotify') packet.keys.forEach(key => ws.keys.add(key));
         else if (packet.cmd === 'Get') {
           if (packet.timerReadyStart) fixture.beforeReadyRead?.();
           const keys = Object.fromEntries(packet.keys.map(key => [key, key.startsWith('_read_client_status_0_') ? fixture.statuses[Number(key.split('_').at(-1))] : fixture.store.get(key) ?? null]));
@@ -54,6 +55,8 @@ async function room(t) {
           }
           fixture.store.set(packet.key, value);
           broadcast(packet.key, value);
+        } else if (packet.cmd === 'Say' && packet.text === '!status') {
+          if (fixture.statusData) send(ws, {cmd:'PrintJSON',type:'CommandResult',data:[{text:fixture.statusData}]});
         } else if (packet.cmd !== 'Say' || !fixture.allowSay) assert.fail(`Unexpected gameplay command: ${packet.cmd}`);
       }
     });
@@ -366,10 +369,10 @@ test('results chat is explicit, finished-only, connected-only and sent once per 
   r.goal(1);
   r.event('Release', 2);
   await until(() => a.snapshot().allFinished);
-  assert.equal(r.packets.filter(p => p.cmd === 'Say').length, 0, 'finishing never posts automatically');
+  assert.equal(r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status').length, 0, 'finishing never posts automatically');
   a.postResults();
-  await until(() => r.packets.filter(p => p.cmd === 'Say').length === 3);
-  const messages = r.packets.filter(p => p.cmd === 'Say');
+  await until(() => r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status').length === 3);
+  const messages = r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status');
   assert.match(messages[0].text, /Total Group Time: 00:00:06/);
   assert.match(messages[1].text, /Player1 \(Completed\).*Checks: 0.*Longest BK: N\/A/);
   assert.match(messages[2].text, /Player2 \(Released\).*Longest BK: N\/A/);
@@ -571,7 +574,8 @@ test('release-generated RoomUpdate checks do not create a halfway event', async 
   a.receive({ cmd: 'RoomUpdate', checked_locations: [101, 102] });
   await until(() => a.finishes[1]);
   assert.equal(a.snapshot().events.some(e => e.type === 'half'), false);
-  assert.equal(a.snapshot().players[0].checkProgress.checked, 0);
+  assert.equal(a.snapshot().players[0].checkProgress.checked, 2, 'world progress includes server release checks');
+  assert.equal(a.snapshot().players[0].stats.checksCompleted, 0, 'release does not become timed race checks');
 });
 
 test('saved-profile roster resolution is applied before following a room countdown', async t => {
@@ -637,7 +641,7 @@ test('room countdown starts one shared timer without app ready confirmations; ti
   assert.equal(late.run.startedAt, start);
   assert.equal(a.now(), b.now());
   assert.ok(r.packets.filter(p => p.cmd === 'Set' && p.key === a.key).length <= 2, 'duplicate countdowns do not write new starts');
-  assert.ok(!r.packets.some(p => ['Say', 'StatusUpdate', 'LocationChecks'].includes(p.cmd)));
+  assert.ok(!r.packets.some(p => (['Say', 'StatusUpdate', 'LocationChecks'].includes(p.cmd) && p.text !== '!status')));
 });
 
 test('text-only room announcements follow the selected roster and allow short server countdowns', async t => {
@@ -718,4 +722,94 @@ test('saved manual starts win over a countdown received during another observer 
   assert.equal(b.run.startedAt, target);
   assert.equal(b.run.source, 'app');
   assert.equal(b.pendingCountdown, null);
+});
+
+
+test('runner declarations sync between apps, survive reconnect and remain session scoped without resetting BK', async t => {
+  const f = await room(t), first = await f.join('Player1'), second = await f.join('Player2'), otherSession = await f.join('Player2', 'other');
+  first.setContext({ state: 'waiting', detail: 'Hammer' });
+  await until(() => second.snapshot().players.find(p => p.slot === 1)?.runnerContext?.detail === 'Hammer', 'shared waiting status');
+  assert.equal(otherSession.snapshot().players.find(p => p.slot === 1).runnerContext, null);
+  first.start([1, 2], 5); await until(() => second.run); f.time += 5000;
+  const since = first.snapshot().bk.since;
+  first.setContext({ state: 'gomode' });
+  await until(() => second.snapshot().players.find(p => p.slot === 1)?.runnerContext?.state === 'gomode');
+  assert.equal(first.snapshot().bk.since, since);
+  assert.ok(second.snapshot().events.some(e => e.type === 'context' && /Go mode/.test(e.message)));
+  const later = await f.join('Player1');
+  assert.equal(later.snapshot().players.find(p => p.slot === 1).runnerContext.state, 'gomode');
+  assert.ok(!later.snapshot().events.some(e => e.type === 'context'), 'stored declarations do not replay alerts');
+  assert.throws(() => first.setContext({ state: 'invalid' }));
+});
+
+test('first check and long check-gap recovery events are derived from shared check timestamps', async t => {
+  const f = await room(t), timer = await f.join(); timer.start([1, 2], 5); await until(() => timer.run);
+  f.time += 610000; f.check(1, 501); await until(() => timer.snapshot().stats.checksCompleted === 1);
+  const events = timer.snapshot().events;
+  assert.equal(events.filter(e => e.type === 'first').length, 1);
+  assert.equal(events.filter(e => e.type === 'recovery').length, 1);
+  assert.equal(events.filter(e => e.type === 'activity').length, 1);
+  assert.equal(timer.snapshot().bk.since, f.time);
+  f.check(1, 501); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(timer.snapshot().events.filter(e => e.type === 'recovery').length, 1);
+});
+
+
+test('server progress resync repairs missed world checks and hint purchases without replacing start or inventing check timestamps', async t => {
+  const f = await room(t); f.roomOptions = {hint_cost:10,location_check_points:1};
+  f.locationInfo[1] = { checked_locations:[101], missing_locations:[102,103,104,105,106,107,108,109,110], hint_points:1 };
+  const first = await f.join(), other = await f.join('Player2');
+  await until(() => other.snapshot().players[0].checkProgress?.total === 10);
+  first.start([1,2],5); await until(() => first.run); f.time += 5000;
+  const start = first.run.startedAt, beforeBK = first.snapshot().bk.since;
+  f.locationInfo[1] = {checked_locations:[101,102,103,104],missing_locations:[105,106,107,108,109,110],hint_points:2};
+  first.syncProgress();
+  await until(() => !first.progressPending && first.snapshot().players[0].checkProgress?.checked === 4);
+  await until(() => other.snapshot().players[0].checkProgress?.checked === 4);
+  assert.equal(first.run.startedAt,start); assert.equal(first.snapshot().bk.since,beforeBK);
+  assert.equal(first.snapshot().players[0].stats.checksCompleted,0,'recovered world counts have no fabricated timing');
+  assert.ok(first.snapshot().events.some(e=>e.type==='sync' && e.message.includes('+3') && e.message.includes('Server snapshot')),'own recovered checks have an explanation');
+  assert.equal(first.snapshot().reviewChecks.length,0,'recovered counters never become timeline check timestamps');
+  assert.equal(first.snapshot().players[0].hintsUsed,2); assert.equal(other.snapshot().players[0].hintsUsed,2);
+  assert.equal(first.snapshot().events.filter(e => e.type === 'first' || e.type === 'recovery').length,0);
+  assert.ok(!f.packets.some(p => ['LocationChecks','StatusUpdate','Sync'].includes(p.cmd)));
+  first.disconnect(); const rejoined = await f.join();
+  assert.equal(rejoined.snapshot().players[0].checkProgress.checked,4);
+  assert.equal(rejoined.snapshot().players[0].hintsUsed,2);
+});
+
+test('world counts and hint use remain available after release, without restoring race activity', async t => {
+  const f = await room(t); f.roomOptions = {hint_cost:10,location_check_points:1};
+  f.locationInfo[1] = {checked_locations:[],missing_locations:[1,2,3,4],hint_points:0};
+  const timer = await f.join(); timer.start([1],5); await until(() => timer.run); f.time+=5000;
+  f.event('Release',1); await until(() => timer.snapshot().allFinished);
+  f.broadcast({cmd:'RoomUpdate',checked_locations:[1,2,3,4],hint_points:2});
+  await until(() => timer.snapshot().players[0].checkProgress?.checked === 4);
+  assert.equal(timer.snapshot().players[0].hintsUsed,2);
+  assert.equal(timer.snapshot().players[0].stats.checksCompleted,0); assert.equal(timer.snapshot().bk,null);
+});
+
+
+test('background heartbeat obtains a new authoritative snapshot after one minute', async t => {
+  const f = await room(t); f.locationInfo[1] = {checked_locations:[],missing_locations:[1,2]};
+  const timer = await f.join();
+  f.locationInfo[1] = {checked_locations:[1],missing_locations:[2]};
+  f.time += 60000; timer.pollRoom();
+  await until(() => !timer.progressPending && timer.snapshot().players[0].checkProgress?.checked === 1);
+  assert.equal(f.packets.filter(p => p.cmd === 'Connect').length,2);
+  assert.ok(f.packets.some(p => p.cmd === 'Get' && p.timerProgressSync));
+});
+
+
+test('one timer recovers the whole roster from status without other timer apps', async t => {
+  const f=await room(t);
+  f.statusData='Player Status on team 0:\nPlayer1 has 1 connection. (1/4)\nPlayer2 has 0 connections. (7/10)';
+  const timer=await f.join();
+  await until(()=>timer.snapshot().players[1].checkProgress?.checked===7);
+  assert.equal(timer.snapshot().players[1].checkProgress.total,10);
+  assert.equal(timer.snapshot().players[1].hintsUsed,null,'counts do not fabricate hint use');
+  timer.start([1,2],5); await until(()=>timer.run); f.time+=5000;
+  f.check(2,999); await until(()=>timer.snapshot().players[1].checkProgress.checked===8);
+  f.check(2,999); await new Promise(r=>setTimeout(r,20));
+  assert.equal(timer.snapshot().players[1].checkProgress.checked,8,'duplicate messages do not inflate room counts');
 });
