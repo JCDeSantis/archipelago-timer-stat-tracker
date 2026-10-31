@@ -101,23 +101,29 @@ declared status, check timestamps, or finish times. A normal reconnect also gets
 a complete snapshot. **Connection health → Sync progress now** requests the same
 refresh manually and shows the latest own-world refresh time.
 
-All-player check counts can now be recovered through this app's existing
-connection, without other racers installing the timer. By default, it requests
-the informational `!status` command on connection and at most once per minute.
-Only the server's response for the connected team is accepted; player names must
-match uniquely. The command does not change gameplay or post race results.
+Normal use requires no tracker URL. The app uses observed live checks, own-slot
+server snapshots and any snapshots shared by other timer users. This is
+best-effort tracking: missed checks during offline periods can remain absent.
 
-For compatible WebHost servers, optionally enter the correct room or tracker URL
-in the connection form, or open **Connection health**, enter the URL and select
-**Use this source**. The app discovers the tracker from a room URL and reads its
-all-player checked locations, totals and games. Dynamic API data is cached for
-60 seconds and static data for five minutes. Counts may therefore lag behind
-live events. Roster/game/own-world checks reject mismatched data, but always use
-the URL belonging to the connected room. API failures fall back to `!status`.
-Connection health shows the source and last successful refresh.
+Optional all-player count recovery uses the structured WebHost tracker API.
+Enter the correct room or tracker page URL in the connection form, or open
+**Connection health**, paste it and select **Use this source**. Other racers do
+not need to install this app. A server address/port alone cannot identify its
+room's tracker; the app does not guess or search other rooms.
+
+The app discovers the tracker from a room URL and reads all-player checked
+location IDs, totals and games automatically once per minute. Dynamic data is
+cached for 60 seconds and static data for five minutes. Roster/game/own-world
+checks reject mismatched responses. API errors retain known counts, display a
+clear connection-health explanation and retry automatically. Without a URL or
+during API outages, own-slot server snapshots, shared observers and live events
+continue; full remote-player recovery remains unavailable until API sync works.
+No chat commands are sent for synchronization. The old chat-command fallback was
+removed in 0.5.1. Connection health shows whether setup is missing, the selected
+source, last refresh and any error.
 
 Hints Used remains best-effort: other runners' hint purchases are available when
-their updated timer shares them. Neither the tracker API nor `!status` provides
+their updated timer shares them. The tracker API does not provide
 an exact purchase counter. Missing values stay unknown. The app does not sign
 into other players' slots or infer totals from a game-wide item database.
 Last known counts remain visible offline; refreshes stop while the app is closed.
@@ -125,7 +131,7 @@ Applying a profile or history setup clears an unspecified tracker URL; enter the
 matching URL for that room if desired.
 
 Unknown timestamps from missed checks remain unknown: a corrected world counter
-cannot reconstruct BK history or a missed finish time. API and status counts do
+cannot reconstruct BK history or a missed finish time. API counts do
 not create check timestamps or mark racers as finished.
 The server's normal Sync command only resends received items, so it is not used
 as a world-check snapshot request.

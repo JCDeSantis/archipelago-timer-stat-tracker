@@ -463,7 +463,6 @@ class RunTimer extends EventEmitter {
     this.lastPacketAt = Date.now();
     this.notifications.receive(packet);
     if (packet.cmd === 'DataPackage' || (packet.cmd === 'PrintJSON' && packet.type === 'Hint')) { this.changed(); return; }
-    if (this.roomProgress.receive(packet)) { this.changed(); return; }
     const countdown = roomCountdownSeconds(packet, this.team);
     if (packet.cmd === 'RoomInfo') {
       if (!Number.isFinite(packet.time) || typeof packet.seed_name !== 'string') throw new Error('The room did not provide a server clock and seed.');

@@ -1,6 +1,6 @@
 {
   "name": "archipelago-timer-stat-tracker",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Shared Archipelago run timers, individual and group completion statistics, and a solo stopwatch.",
   "main": "src/main.js",
   "author": "JC_DeSantis",

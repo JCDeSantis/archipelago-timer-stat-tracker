@@ -283,7 +283,7 @@ function accept(next) {
       const game = document.createElement('small'); game.className = 'runner-game'; game.textContent = p.game; game.title = p.game; game.hidden=!compactColumns.includes('game'); name.append(game);
       name.className = p.stopped ? 'complete' : '';
       const checks = document.createElement('td'); checks.textContent = p.checkProgress ? `${p.checkProgress.checked} / ${p.checkProgress.total}` : `${p.stats.checksCompleted} / ?`;
-      checks.title = checks.textContent + ' · ' + (p.checkProgress ? 'Server world progress (includes checks before this race and release/collect).' : 'World total unavailable. Showing recorded race checks only.');
+      checks.title = checks.textContent + ' · ' + (p.checkProgress ? 'Server world progress (includes checks before this race and release/collect).' : 'World total unavailable. Showing observed race checks only; checks missed while offline may be absent.');
       const hints = document.createElement('td'); hints.textContent = Number.isSafeInteger(p.hintsUsed) ? String(p.hintsUsed) : '—'; hints.dataset.hintsSlot = p.slot;
       hints.title = Number.isSafeInteger(p.hintsUsed) ? 'Purchased hints calculated from server-confirmed points and checks.' : 'Hint purchases unavailable: free hints or insufficient server data.';
       const bk = document.createElement('td'); bk.dataset.bkSlot = p.slot;

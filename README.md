@@ -68,6 +68,19 @@ build scripts, and workflows are not bundled into the application. `node_modules
 and `dist/` are generated locally and excluded from Git. To use the app, download
 a release asset; cloning this source repository is only needed for development.
 
+## Check-count recovery
+
+Normal use requires only the server address, port and your slot name. Counts use
+live checks and available shared snapshots; missed offline checks may be absent.
+No status chat commands are sent.
+
+For optional automatic recovery of everyone's counts, enter the room or tracker page URL
+in the connection form or **Connection health**. Version 0.5.1 uses structured
+tracker API responses, with no chat-command sync fallback. It refreshes once per
+minute; live tracking continues during API outages. Other racers do not need
+this app. Without a room/tracker URL, your own snapshots and observed/shared
+checks still work, but missed checks for other racers cannot be fully recovered.
+
 ## Shared runs
 
 The main timer remains first and prominent in every view. **Live race**, **History

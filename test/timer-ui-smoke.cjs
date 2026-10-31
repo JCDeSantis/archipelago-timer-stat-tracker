@@ -44,7 +44,7 @@ app.whenReady().then(async () => {
       send(ws, { cmd: 'RoomInfo', seed_name: 'UI-test-multiworld', time: Date.now() / 1000, hint_cost:10, location_check_points:1 });
       ws.on('message', data => {
         for (const packet of JSON.parse(data)) {
-          if (packet.cmd === 'Say') { if (packet.text !== '!status') chatMessages.push(packet.text); }
+          if (packet.cmd === 'Say') chatMessages.push(packet.text);
           else if (packet.cmd === 'Connect') send(ws, { cmd: 'Connected', team: 0, slot: 1,
             checked_locations: [], missing_locations: [101, 102, 103, 104], hint_points:0,
             players: [{ team: 0, slot: 1, name: 'Link', alias: 'Link' }, { team: 0, slot: 2, name: 'Samus', alias: 'Samus' }],
@@ -519,6 +519,7 @@ app.whenReady().then(async () => {
     await run(`document.getElementById('countdown-preview').click();document.getElementById('custom-sound-preview').click()`);
     await run(`document.querySelector('[data-workspace="health"]').click()`);
     assert.match(await run(`document.getElementById('health-details').textContent`), /Recording coverage/);
+    assert.match(await run(`document.getElementById('workspace-panel').textContent`), /No tracker URL is needed for normal use/);
     const progressStart = await run(`state.run.startedAt`);
     await run(`document.getElementById('progress-sync').click()`);
     await until(() => run(`!state.health.progressPending && state.health.progressSyncAt !== null`), 'manual authoritative progress sync');
@@ -533,6 +534,8 @@ app.whenReady().then(async () => {
     const trackerURL = `http://127.0.0.1:${trackerServer.address().port}/tracker/abcdefghijklmnopqrstuv`;
     await run(`document.getElementById('tracker-source-url').value=${JSON.stringify(trackerURL)};document.getElementById('tracker-source-save').click()`);
     await until(() => run(`state.health.roomCounts.source === 'Tracker API' && state.players.find(p => p.slot === 2).checkProgress.total === 6`), 'all-player tracker counts without another app');
+    assert.equal(await run(`state.health.roomCounts.needsUrl`),false,'tracker setup clears the missing URL notice');
+    assert.equal(chatMessages.some(text=>text.startsWith('!')),false,'neither automatic nor manual sync sends a chat command');
     assert.equal(await run(`document.getElementById('trackerUrl').value`),trackerURL,'tracker source retained for reconnect');
     await run(`window.runTimer.invoke('disconnect').then(result => AppTimer.invoke('state'))`);
     await run(`document.querySelector('[data-workspace="profiles"]').click()`);

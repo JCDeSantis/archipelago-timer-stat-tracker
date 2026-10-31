@@ -11,24 +11,6 @@ function trackerSource(value) {
   return { url: `${url.origin}/${parts[0]}/${parts[1]}`, origin: url.origin, kind: parts[0], id: parts[1] };
 }
 
-function statusCounts(text, players, team) {
-  if (typeof text !== 'string' || text.length > 1024 * 1024) return null;
-  const lines = text.trim().split(/\r?\n/);
-  if (lines.shift() !== `Player Status on team ${team}:`) return null;
-  const result = new Map();
-  for (const line of lines) {
-    const match = /^(.+) has \d+ connections?.* \((\d+)\/(\d+)\)$/.exec(line);
-    if (!match) continue;
-    const candidates = players.filter(p => p.name === match[1] || p.originalName === match[1]);
-    const checked = Number(match[2]), total = Number(match[3]);
-    if (candidates.length !== 1 || !Number.isSafeInteger(checked) || !Number.isSafeInteger(total) || checked > total) continue;
-    const slot = candidates[0].slot;
-    if (result.has(slot)) return null;
-    result.set(slot, { checked, total, source: '!status' });
-  }
-  return result.size ? result : null;
-}
-
 class RoomProgress {
   constructor(timer, { fetch = globalThis.fetch } = {}) {
     this.timer = timer; this.fetch = fetch; this.cache = new Map(); this.reset();
@@ -37,12 +19,12 @@ class RoomProgress {
     this.cancel();
     this.counts = new Map(); this.source = ''; this.error = '';
     this.recoveries = []; this.recoverySequence = 0;
-    this.syncedAt = null; this.lastStatusAt = -Infinity;
+    this.syncedAt = null; this.lastAttemptAt = -Infinity;
   }
   cancel() {
     this.controller?.abort(); clearTimeout(this.timeout);
     this.generation = (this.generation || 0) + 1;
-    this.pending = false; this.statusUntil = 0;
+    this.pending = false;
   }
   async json(url, ttl, signal) {
     const now = this.timer.clock(), cached = this.cache.get(url);
@@ -65,7 +47,9 @@ class RoomProgress {
     const t = this.timer, generation = this.generation, key = t.key, socket = t.socket;
     const current = () => generation === this.generation && t.key === key && t.socket === socket && t.connection === 'connected' && t.hydrated;
     const source = trackerSource(t.options.trackerUrl || '');
-    if (!source) { this.requestStatus(); return; }
+    if (!source) { this.error = ''; return; }
+    if(t.clock()-this.lastAttemptAt<60000) return;
+    this.lastAttemptAt=t.clock();
     this.pending = true; this.controller = new AbortController();
     this.timeout = setTimeout(() => this.controller?.abort(), 20000); this.timeout.unref?.();
     try {
@@ -94,27 +78,10 @@ class RoomProgress {
       }
       this.applyCounts(counts, 'Tracker API'); this.error = '';
     } catch (error) {
-      if (current()) { this.error = error.name === 'AbortError' ? 'Tracker request timed out.' : 'Tracker unavailable or mismatched. Check the room/tracker URL.'; this.requestStatus(); }
+      if (current()) { this.error = error.name === 'AbortError' ? 'Tracker request timed out. Retrying automatically; live tracking continues.' : 'Tracker sync unavailable or room data does not match. Verify the room/tracker URL; live tracking continues.'; }
     } finally {
       if (generation === this.generation) { clearTimeout(this.timeout); this.pending = false; if (current()) t.changed(); }
     }
-  }
-  requestStatus() {
-    const t = this.timer;
-    if (t.connection !== 'connected' || !t.hydrated || t.socket?.readyState !== 1 || t.clock() - this.lastStatusAt < 60000) return;
-    this.lastStatusAt = t.clock(); this.statusUntil = t.clock() + 15000;
-    t.send({ cmd: 'Say', text: '!status' });
-  }
-  receive(packet) {
-    if (packet.cmd !== 'PrintJSON' || packet.type !== 'CommandResult' || this.timer.clock() > this.statusUntil || !this.statusUntil ||
-      !Array.isArray(packet.data) || !packet.data.every(p => typeof p.text === 'string' && [undefined, 'text'].includes(p.type))) return false;
-    const counts = statusCounts(packet.data.map(p => p.text).join(''), this.timer.players, this.timer.team);
-    if (!counts) return false;
-    // Require every playable slot: a partial/ambiguous text response must not
-    // replace a complete earlier snapshot or attach a count to the wrong player.
-    if (counts.size !== this.timer.players.length) return false;
-    this.applyCounts(counts, '!status'); this.statusUntil = 0;
-    return true;
   }
   applyCounts(counts, source) {
     const recovered = [];
@@ -122,11 +89,11 @@ class RoomProgress {
       const old = this.counts.get(slot), info = this.timer.locations?.[slot];
       if (!old || old.total !== value.total) continue; // First snapshot establishes a baseline.
       const known = this.progress({slot}, info, this.timer.checks?.[slot])?.checked ?? old.checked;
-      if (value.checked > known) recovered.push({slot, count:value.checked-known});
       if (value.locations && old.locations) {
-        for (const id of old.locations) value.locations.add(id);
+        for (const id of [...old.locations, ...(info?.checked || []), ...Object.keys(this.timer.checks?.[slot] || {}).map(Number)]) value.locations.add(id);
         value.checked = Math.min(value.total,value.locations.size);
       } else value.checked = Math.min(value.total,Math.max(known,value.checked));
+      if (value.checked > known) recovered.push({slot, count:value.checked-known});
     }
     this.counts=counts; this.source=source; this.syncedAt=this.timer.now();
     this.explain(recovered,source);
@@ -153,6 +120,6 @@ class RoomProgress {
     if (value.locations) { value.locations.add(location); value.checked = value.locations.size; }
     else value.checked = Math.min(value.total, value.checked + 1);
   }
-  health() { return { source: this.source || 'Waiting for room counts', at: this.syncedAt, pending: this.pending, error: this.error, recovery:this.recoveries.at(-1) || null }; }
+  health() { return { needsUrl:!this.timer.options?.trackerUrl, source: this.source || (this.timer.options?.trackerUrl ? 'Waiting for tracker API' : 'Live events + shared snapshots (best effort)'), at: this.syncedAt, pending: this.pending, error: this.error, recovery:this.recoveries.at(-1) || null }; }
 }
-module.exports = { RoomProgress, trackerSource, statusCounts };
+module.exports = { RoomProgress, trackerSource };

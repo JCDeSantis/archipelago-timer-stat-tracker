@@ -55,8 +55,6 @@ async function room(t) {
           }
           fixture.store.set(packet.key, value);
           broadcast(packet.key, value);
-        } else if (packet.cmd === 'Say' && packet.text === '!status') {
-          if (fixture.statusData) send(ws, {cmd:'PrintJSON',type:'CommandResult',data:[{text:fixture.statusData}]});
         } else if (packet.cmd !== 'Say' || !fixture.allowSay) assert.fail(`Unexpected gameplay command: ${packet.cmd}`);
       }
     });
@@ -369,10 +367,10 @@ test('results chat is explicit, finished-only, connected-only and sent once per 
   r.goal(1);
   r.event('Release', 2);
   await until(() => a.snapshot().allFinished);
-  assert.equal(r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status').length, 0, 'finishing never posts automatically');
+  assert.equal(r.packets.filter(p => p.cmd === 'Say').length, 0, 'finishing never posts automatically');
   a.postResults();
-  await until(() => r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status').length === 3);
-  const messages = r.packets.filter(p => p.cmd === 'Say' && p.text !== '!status');
+  await until(() => r.packets.filter(p => p.cmd === 'Say').length === 3);
+  const messages = r.packets.filter(p => p.cmd === 'Say');
   assert.match(messages[0].text, /Total Group Time: 00:00:06/);
   assert.match(messages[1].text, /Player1 \(Completed\).*Checks: 0.*Longest BK: N\/A/);
   assert.match(messages[2].text, /Player2 \(Released\).*Longest BK: N\/A/);
@@ -641,7 +639,7 @@ test('room countdown starts one shared timer without app ready confirmations; ti
   assert.equal(late.run.startedAt, start);
   assert.equal(a.now(), b.now());
   assert.ok(r.packets.filter(p => p.cmd === 'Set' && p.key === a.key).length <= 2, 'duplicate countdowns do not write new starts');
-  assert.ok(!r.packets.some(p => (['Say', 'StatusUpdate', 'LocationChecks'].includes(p.cmd) && p.text !== '!status')));
+  assert.ok(!r.packets.some(p => (['Say', 'StatusUpdate', 'LocationChecks'].includes(p.cmd))));
 });
 
 test('text-only room announcements follow the selected roster and allow short server countdowns', async t => {
@@ -801,15 +799,29 @@ test('background heartbeat obtains a new authoritative snapshot after one minute
 });
 
 
-test('one timer recovers the whole roster from status without other timer apps', async t => {
+test('connection and background refresh send no status chat command', async t => {
+  const f=await room(t),timer=await f.join();
+  timer.syncProgress();f.time+=61000;timer.pollRoom();
+  await until(()=>!timer.progressPending);
+  assert.equal(f.packets.filter(p=>p.cmd==='Say').length,0);
+  assert.equal(timer.snapshot().health.roomCounts.needsUrl,true);
+});
+
+test('tracker API recovers another player without a second timer app or chat commands', async t => {
   const f=await room(t);
-  f.statusData='Player Status on team 0:\nPlayer1 has 1 connection. (1/4)\nPlayer2 has 0 connections. (7/10)';
-  const timer=await f.join();
+  const fixed={player_locations_total:[{team:0,player:1,total_locations:4},{team:0,player:2,total_locations:10}],player_game:[{team:0,player:1,game:'A Link to the Past'},{team:0,player:2,game:'Super Metroid'}]};
+  const live={player_checks_done:[{team:0,player:1,locations:[101]},{team:0,player:2,locations:[201,202,203,204,205,206,207]}]};
+  f.timerOptions={progressFetch:async url=>new Response(JSON.stringify(url.includes('static_tracker')?fixed:live))};
+  const timer=await f.join();timer.setTrackerSource('https://tracker.example/tracker/abcdefghijklmnopqrstuv');
   await until(()=>timer.snapshot().players[1].checkProgress?.checked===7);
-  assert.equal(timer.snapshot().players[1].checkProgress.total,10);
-  assert.equal(timer.snapshot().players[1].hintsUsed,null,'counts do not fabricate hint use');
-  timer.start([1,2],5); await until(()=>timer.run); f.time+=5000;
-  f.check(2,999); await until(()=>timer.snapshot().players[1].checkProgress.checked===8);
-  f.check(2,999); await new Promise(r=>setTimeout(r,20));
-  assert.equal(timer.snapshot().players[1].checkProgress.checked,8,'duplicate messages do not inflate room counts');
+  timer.start([1,2],5);await until(()=>timer.run);f.time+=5000;
+  f.check(2,999);await until(()=>timer.snapshot().players[1].checkProgress.checked===8);
+  f.check(2,999);await new Promise(r=>setTimeout(r,20));
+  assert.equal(timer.snapshot().players[1].checkProgress.checked,8);
+  live.player_checks_done[1].locations.push(1000);f.time+=60000;timer.syncProgress();
+  await until(()=>timer.snapshot().players[1].checkProgress.checked===9);
+  assert.equal(timer.snapshot().players[1].stats.checksCompleted,1,'recovered counts have no invented check times');
+  assert.ok(timer.snapshot().events.some(e=>e.type==='sync'&&e.message.includes('Player2 +1')));
+  assert.equal(timer.snapshot().players[1].hintsUsed,null);
+  assert.equal(f.packets.filter(p=>p.cmd==='Say').length,0);
 });
